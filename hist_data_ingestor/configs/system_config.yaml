@@ -1,0 +1,16 @@
+# System configuration for Hist_Data_Ingestor
+
+db:
+  user: ${TIMESCALEDB_USER}
+  password: ${TIMESCALEDB_PASSWORD}
+  host: ${TIMESCALEDB_HOST}
+  port: ${TIMESCALEDB_PORT}
+  dbname: ${TIMESCALEDB_DBNAME}
+
+logging:
+  level: ${LOG_LEVEL}
+  file: logs/app.log
+
+api:
+  ib_api_key: ${IB_API_KEY}
+  databento_api_key: ${DATABENTO_API_KEY}
