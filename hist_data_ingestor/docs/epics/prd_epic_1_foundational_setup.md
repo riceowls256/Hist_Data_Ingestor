@@ -1,5 +1,12 @@
 # PRD Epic 1: Foundational Setup & Core Framework
 
+**Progress:**
+- [x] Story 1.1: Initialize Project Repository and Directory Structure
+- [ ] Story 1.2: Implement Core Configuration Management for System Settings
+- [ ] Story 1.3: Establish Dockerized Development Environment
+- [ ] Story 1.4: Implement Basic Centralized Logging Framework
+- [ ] Story 1.5: Initialize TimescaleDB and Establish SQLAlchemy Connection
+
 **Source:** prd.md §6, Epic 1
 
 **Summary:**
@@ -15,16 +22,16 @@ Covers the initial setup of the project repository, directory structure, and bas
 **So that** the project has a clean, organized foundation compliant with best practices and the research document
 
 ### Tasks
-- [ ] Create a new private GitHub repository named `Hist_Data_Ingestor`
-- [ ] Clone the repository to your local machine
-- [ ] Set up the core directory structure: `configs/`, `src/`, `tests/`, `docs/`, etc.
-- [ ] Create initial core files: `.gitignore`, `README.md`, `requirements.txt`, `.env.example`
-- [ ] Set up sub-directory structure and initial files as per the PRD/architecture
-- [ ] Make the initial commit and push to GitHub
+- [x] Create a new private GitHub repository named `Hist_Data_Ingestor`
+- [x] Clone the repository to your local machine
+- [x] Set up the core directory structure: `configs/`, `src/`, `tests/`, `docs/`, etc.
+- [x] Create initial core files: `.gitignore`, `README.md`, `requirements.txt`, `.env.example`
+- [x] Set up sub-directory structure and initial files as per the PRD/architecture
+- [x] Make the initial commit and push to GitHub
 
 ### Acceptance Criteria
-- [ ] All directories and files are created as specified
-- [ ] Initial commit is pushed to GitHub
+- [x] All directories and files are created as specified
+- [x] Initial commit is pushed to GitHub
 
 ---
 
