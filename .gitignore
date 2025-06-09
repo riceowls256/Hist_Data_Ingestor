@@ -1,2 +1,5 @@
 # Ignore environment variable files
 .env 
+
+# Add logs/ to the .gitignore file to prevent log files from being committed to the repository.
+logs/ 

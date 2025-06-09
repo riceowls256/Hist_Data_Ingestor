@@ -1,5 +1,6 @@
 import os
 import psycopg2
+from utils.custom_logger import setup_logging, get_logger
 
 DB_USER = os.getenv('POSTGRES_USER')
 DB_PASSWORD = os.getenv('POSTGRES_PASSWORD')
@@ -8,7 +9,9 @@ DB_PORT = os.getenv('POSTGRES_PORT', '5432')
 DB_NAME = os.getenv('POSTGRES_DB')
 
 def main():
-    print("Testing TimescaleDB connection...")
+    setup_logging()  # Initialize logging at startup
+    logger = get_logger(__name__)
+    logger.info("Testing TimescaleDB connection...")
     try:
         conn = psycopg2.connect(
             dbname=DB_NAME,
@@ -17,10 +20,10 @@ def main():
             host=DB_HOST,
             port=DB_PORT
         )
-        print("✅ Successfully connected to TimescaleDB!")
+        logger.info("✅ Successfully connected to TimescaleDB!")
         conn.close()
     except Exception as e:
-        print(f"❌ Failed to connect to TimescaleDB: {e}")
+        logger.error(f"❌ Failed to connect to TimescaleDB: {e}")
 
 if __name__ == "__main__":
     main()

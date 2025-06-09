@@ -8,7 +8,7 @@ db:
   dbname: ${TIMESCALEDB_DBNAME}
 
 logging:
-  level: ${LOG_LEVEL}
+  level: "INFO"
   file: logs/app.log
 
 api:

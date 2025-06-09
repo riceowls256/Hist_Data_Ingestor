@@ -35,6 +35,11 @@ This document captures key lessons learned and improvements made during the impl
 - **Lesson:** Iterative review and approval of each major deliverable (Dockerfile, compose, .env, README) ensures quality and shared understanding.
 - **Fix:** Adopted a review-after-each-step workflow, logging approvals and changes in the story file.
 
+## 7. ConfigManager Refactor (Story 1.2)
+- **Initial:** The original ConfigManager used manual environment variable lookups and type-casting logic to override YAML config values, resulting in verbose and harder-to-maintain code.
+- **Lesson:** Pydantic's BaseSettings can automatically handle environment variable overrides, type conversion, and validation, making manual logic unnecessary.
+- **Fix:** Refactored ConfigManager and all config classes to inherit from Pydantic BaseSettings. Now, YAML provides defaults and environment variables override automatically. The code is leaner, more maintainable, and less error-prone. This change leverages Pydantic's strengths and reduces future maintenance burden.
+
 ---
 
 **Summary:**

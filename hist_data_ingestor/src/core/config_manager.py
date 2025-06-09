@@ -1,33 +1,49 @@
 from pathlib import Path
-import os
 import yaml
-from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
-load_dotenv()
+from pydantic import BaseSettings, Field, ValidationError
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / 'configs' / 'system_config.yaml'
 
-class DBConfig(BaseModel):
-    user: str
-    password: str
-    host: str
-    port: int
-    dbname: str
+class DBConfig(BaseSettings):
+    user: str = Field(..., env='TIMESCALEDB_USER')
+    password: str = Field(..., env='TIMESCALEDB_PASSWORD')
+    host: str = Field('localhost', env='TIMESCALEDB_HOST')
+    port: int = Field(5432, env='TIMESCALEDB_PORT')
+    dbname: str = Field('hist_data_ingestor', env='TIMESCALEDB_DBNAME')
 
-class LoggingConfig(BaseModel):
-    level: str = 'INFO'
-    file: str = 'logs/app.log'
+    class Config:
+        env_prefix = ''
+        case_sensitive = False
 
-class APIConfig(BaseModel):
-    ib_api_key: str
-    databento_api_key: str
+class LoggingConfig(BaseSettings):
+    level: str = Field('INFO', env='LOG_LEVEL')
+    file: str = Field('logs/app.log')
 
-class SystemConfig(BaseModel):
+    class Config:
+        env_prefix = ''
+        case_sensitive = False
+
+class APIConfig(BaseSettings):
+    ib_api_key: str = Field(..., env='IB_API_KEY')
+    databento_api_key: str = Field(..., env='DATABENTO_API_KEY')
+
+    class Config:
+        env_prefix = ''
+        case_sensitive = False
+
+class SystemConfig(BaseSettings):
     db: DBConfig
     logging: LoggingConfig
     api: APIConfig
 
+    class Config:
+        env_nested_delimiter = '__'
+        case_sensitive = False
+
 class ConfigManager:
+    """
+    Loads system configuration from YAML file, with environment variables automatically overriding defaults via Pydantic BaseSettings.
+    """
     def __init__(self, config_path=CONFIG_PATH):
         self.config_path = config_path
         self.config = self._load_config()
@@ -37,33 +53,6 @@ class ConfigManager:
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
         with open(self.config_path, 'r') as f:
             raw = yaml.safe_load(f)
-        # Override with environment variables if present
-        raw['db']['user'] = os.getenv('TIMESCALEDB_USER', raw['db'].get('user', ''))
-        raw['db']['password'] = os.getenv('TIMESCALEDB_PASSWORD', raw['db'].get('password', ''))
-        raw['db']['host'] = os.getenv('TIMESCALEDB_HOST', raw['db'].get('host', 'localhost'))
-        # Robustly handle port override and placeholder values
-        port_env = os.getenv('TIMESCALEDB_PORT')
-        port_yaml = raw['db'].get('port', 5432)
-        try:
-            if port_env is not None:
-                raw['db']['port'] = int(port_env)
-            else:
-                # If the YAML value is a string (e.g., a placeholder), try to convert
-                if isinstance(port_yaml, int):
-                    raw['db']['port'] = port_yaml
-                elif isinstance(port_yaml, str):
-                    if port_yaml.isdigit():
-                        raw['db']['port'] = int(port_yaml)
-                    else:
-                        raise ValueError(f"Invalid port value in config: '{port_yaml}'. Must be an integer or a valid environment variable.")
-                else:
-                    raise ValueError(f"Invalid port value type in config: {type(port_yaml)}. Must be int or str.")
-        except Exception as e:
-            raise ValueError(f"Error parsing TIMESCALEDB_PORT: {e}")
-        raw['db']['dbname'] = os.getenv('TIMESCALEDB_DBNAME', raw['db'].get('dbname', 'hist_data_ingestor'))
-        raw['logging']['level'] = os.getenv('LOG_LEVEL', raw['logging'].get('level', 'INFO'))
-        raw['api']['ib_api_key'] = os.getenv('IB_API_KEY', raw['api'].get('ib_api_key', ''))
-        raw['api']['databento_api_key'] = os.getenv('DATABENTO_API_KEY', raw['api'].get('databento_api_key', ''))
         try:
             return SystemConfig(**raw)
         except ValidationError as e:
@@ -74,5 +63,8 @@ class ConfigManager:
 
 # Example usage
 if __name__ == "__main__":
+    from utils.custom_logger import setup_logging, get_logger
+    setup_logging()
+    logger = get_logger(__name__)
     cfg = ConfigManager().get()
-    print(cfg.dict())
+    logger.info(cfg.dict())
