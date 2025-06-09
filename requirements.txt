@@ -1,0 +1,13 @@
+pydantic
+sqlalchemy
+typer
+pytest
+structlog
+pandas
+aiohttp
+psycopg2-binary
+tenacity
+docker
+python-dotenv
+pandera
+pyyaml
