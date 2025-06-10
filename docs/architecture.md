@@ -1,3 +1,24 @@
+# System Architecture
+
+This document provides a high-level overview of the system architecture for the Hist Data Ingestor project.
+
+- [Epics](epics/)
+- [Module Documentation](modules/)
+
+## Overview Diagram
+
+```
+mermaid
+flowchart TD
+    Ingestion --> Transformation --> Storage --> Querying
+```
+
+## Components
+- **Ingestion:** Handles data fetching and normalization from external APIs.
+- **Transformation:** Applies mapping, validation, and business rules.
+- **Storage:** Persists data in timescale or other databases.
+- **Querying:** Provides access to stored data for downstream consumers.
+
 # Hist_Data_Ingestor (MVP) Architecture Document
 
 ## 1. Introduction / Preamble
