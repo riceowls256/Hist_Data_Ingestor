@@ -40,6 +40,11 @@ This document captures key lessons learned and improvements made during the impl
 - **Lesson:** Pydantic's BaseSettings can automatically handle environment variable overrides, type conversion, and validation, making manual logic unnecessary.
 - **Fix:** Refactored ConfigManager and all config classes to inherit from Pydantic BaseSettings. Now, YAML provides defaults and environment variables override automatically. The code is leaner, more maintainable, and less error-prone. This change leverages Pydantic's strengths and reduces future maintenance burden.
 
+## 8. Centralized Logging and Python Path Issues (Story 1.4)
+- **Initial:** Implemented a centralized logger, but encountered issues with test discovery and imports due to Python path configuration.
+- **Lesson:** Ensuring the correct PYTHONPATH and import structure is critical for consistent logger usage and successful test execution in a src-layout project.
+- **Fix:** Standardized on using PYTHONPATH=src for test runs and updated imports in test files to match the project structure. Documented this in the story and README for future contributors.
+
 ---
 
 **Summary:**
