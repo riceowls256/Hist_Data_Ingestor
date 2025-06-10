@@ -1,7 +1,0 @@
-cli
-core
-ingestion
-querying
-storage
-transformation
-utils

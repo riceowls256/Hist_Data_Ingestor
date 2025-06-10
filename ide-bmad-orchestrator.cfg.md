@@ -2,7 +2,7 @@
 
 ## Data Resolution
 
-agent-root: /Users/Shared/Tech/Projects/BMAD_projects/BMAD-METHOD
+agent-root: /Users/Shared/Tech/Projects/BMAD_projects/BMAD-METHOD/bmad-agent
 checklists: (agent-root)/checklists
 data: (agent-root)/data
 personas: (agent-root)/personas

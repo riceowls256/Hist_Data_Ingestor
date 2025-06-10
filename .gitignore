@@ -3,3 +3,19 @@
 
 # Add logs/ to the .gitignore file to prevent log files from being committed to the repository.
 logs/ 
+
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# VSCode settings
+.vscode/
+
+# Test cache
+.pytest_cache/
+
+# Ignore virtual environments
+venv/ 
