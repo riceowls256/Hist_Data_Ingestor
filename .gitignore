@@ -19,3 +19,13 @@ __pycache__/
 
 # Ignore virtual environments
 venv/ 
+
+# OS-specific
+.DS_Store
+
+# IDE & Editor files
+.claude/
+
+# Logs
+logs/*.log
+!logs/.gitkeep 
