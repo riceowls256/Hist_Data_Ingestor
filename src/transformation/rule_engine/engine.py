@@ -11,7 +11,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Type
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, ValidationError
 
@@ -294,8 +294,14 @@ class RuleEngine:
         
         # Handle datetime timezone normalization
         if isinstance(value, datetime):
-            # For now, assume all timestamps are already in UTC
-            # Future enhancement: convert to configured timezone
+            # Ensure timezone-aware datetime in UTC
+            if value.tzinfo is None:
+                # Naive datetime - assume it's UTC and make it timezone-aware
+                logger.warning(f"Converting naive datetime to UTC: {value}")
+                return value.replace(tzinfo=timezone.utc)
+            else:
+                # Already timezone-aware - convert to UTC if needed
+                return value.astimezone(timezone.utc)
             return value
         
         # Return value as-is for other types
@@ -304,13 +310,17 @@ class RuleEngine:
     def _apply_global_transformations(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply global transformations to the entire data dictionary."""
         # Apply timezone normalization if configured
-        timezone = self.global_settings.get('timezone_normalization')
-        if timezone:
+        target_timezone = self.global_settings.get('timezone_normalization')
+        if target_timezone == 'UTC':
             for key, value in data.items():
                 if isinstance(value, datetime):
-                    # For MVP, assume all timestamps are already in UTC
-                    # Future enhancement: actual timezone conversion
-                    data[key] = value
+                    # Ensure all timestamps are timezone-aware UTC
+                    if value.tzinfo is None:
+                        logger.warning(f"Converting naive datetime to UTC in field '{key}': {value}")
+                        data[key] = value.replace(tzinfo=timezone.utc)
+                    else:
+                        # Convert to UTC if needed
+                        data[key] = value.astimezone(timezone.utc)
         
         return data
     

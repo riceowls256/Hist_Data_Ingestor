@@ -6,10 +6,10 @@ Databento OHLCV, Trades, TBBO, and Statistics data. These models serve as the
 common data contracts throughout the entire pipeline.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, Any
-from pydantic import BaseModel, Field, ConfigDict, field_serializer
+from pydantic import BaseModel, Field, ConfigDict, field_serializer, field_validator
 
 
 class DatabentoOHLCVRecord(BaseModel):
@@ -47,6 +47,17 @@ class DatabentoOHLCVRecord(BaseModel):
     def serialize_decimal(self, value: Optional[Decimal]) -> Optional[str]:
         """Serialize Decimal fields to string."""
         return str(value) if value is not None else None
+    
+    @field_validator('ts_event', 'ts_init')
+    @classmethod
+    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure datetime fields are timezone-aware (UTC)."""
+        if v is None:
+            return v
+        if v.tzinfo is None:
+            # Naive datetime - assume it's UTC and make it timezone-aware
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class DatabentoTradeRecord(BaseModel):
@@ -82,6 +93,17 @@ class DatabentoTradeRecord(BaseModel):
     def serialize_decimal(self, value: Decimal) -> str:
         """Serialize Decimal fields to string."""
         return str(value)
+    
+    @field_validator('ts_event', 'ts_recv')
+    @classmethod
+    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure datetime fields are timezone-aware (UTC)."""
+        if v is None:
+            return v
+        if v.tzinfo is None:
+            # Naive datetime - assume it's UTC and make it timezone-aware
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class DatabentoTBBORecord(BaseModel):
@@ -122,6 +144,17 @@ class DatabentoTBBORecord(BaseModel):
     def serialize_decimal(self, value: Optional[Decimal]) -> Optional[str]:
         """Serialize Decimal fields to string."""
         return str(value) if value is not None else None
+    
+    @field_validator('ts_event', 'ts_recv')
+    @classmethod
+    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure datetime fields are timezone-aware (UTC)."""
+        if v is None:
+            return v
+        if v.tzinfo is None:
+            # Naive datetime - assume it's UTC and make it timezone-aware
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 class DatabentoStatisticsRecord(BaseModel):
@@ -162,6 +195,17 @@ class DatabentoStatisticsRecord(BaseModel):
     def serialize_decimal(self, value: Optional[Decimal]) -> Optional[str]:
         """Serialize Decimal fields to string."""
         return str(value) if value is not None else None
+    
+    @field_validator('ts_event', 'ts_recv')
+    @classmethod
+    def ensure_timezone_aware(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """Ensure datetime fields are timezone-aware (UTC)."""
+        if v is None:
+            return v
+        if v.tzinfo is None:
+            # Naive datetime - assume it's UTC and make it timezone-aware
+            return v.replace(tzinfo=timezone.utc)
+        return v
 
 
 # Schema mapping for easy lookup

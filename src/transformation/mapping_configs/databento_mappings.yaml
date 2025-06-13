@@ -18,17 +18,15 @@ schema_mappings:
     field_mappings:
       # Timestamp fields - direct mappings
       ts_event: "ts_event"
-      ts_init: "ts_recv"  # Map initial timestamp to receive timestamp
       
       # Symbol/Instrument identification
       instrument_id: "instrument_id"
-      symbol: "symbol"
       
-      # OHLCV price data - direct mappings preserving Decimal precision
-      open: "open"
-      high: "high"
-      low: "low"
-      close: "close"
+      # OHLCV price data - mapped to database column names
+      open: "open_price"
+      high: "high_price"
+      low: "low_price"
+      close: "close_price"
       volume: "volume"
       
       # Optional fields
@@ -39,12 +37,12 @@ schema_mappings:
     transformations:
       # Ensure all prices are positive
       price_validation:
-        fields: ["open", "high", "low", "close", "vwap"]
+        fields: ["open_price", "high_price", "low_price", "close_price", "vwap"]
         rule: "value > 0"
         
       # Ensure OHLCV bar integrity
       ohlcv_integrity:
-        rule: "high >= low and high >= open and high >= close and low <= open and low <= close"
+        rule: "high_price >= low_price and high_price >= open_price and high_price >= close_price and low_price <= open_price and low_price <= close_price"
         
       # Ensure volume is non-negative
       volume_validation:
@@ -53,9 +51,8 @@ schema_mappings:
         
     # Default values for missing fields
     defaults:
-      publisher_id: 1  # Default Databento publisher ID
-      sequence: null
-      flags: 0
+      granularity: "1d"  # Default to daily OHLCV
+      data_source: "databento"
   
   # Trade Data Mapping  
   trades:
@@ -70,7 +67,6 @@ schema_mappings:
       
       # Symbol/Instrument identification
       instrument_id: "instrument_id"
-      symbol: "symbol"
       
       # Trade execution data
       price: "price"
@@ -78,8 +74,6 @@ schema_mappings:
       
       # Trade metadata
       side: "side"
-      trade_id: "trade_id"
-      order_id: "order_id"
       
     # Data transformations
     transformations:
@@ -124,7 +118,6 @@ schema_mappings:
       
       # Symbol/Instrument identification
       instrument_id: "instrument_id"
-      symbol: "symbol"
       
       # Bid data
       bid_px: "bid_px_00"
@@ -144,17 +137,17 @@ schema_mappings:
     transformations:
       # Ensure bid/ask prices are positive when present
       price_validation:
-        fields: ["bid_px", "ask_px"]
+        fields: ["bid_px_00", "ask_px_00"]
         rule: "value is null or value > 0"
         
       # Ensure bid/ask sizes are non-negative when present  
       size_validation:
-        fields: ["bid_sz", "ask_sz", "bid_ct", "ask_ct"]
+        fields: ["bid_sz_00", "ask_sz_00", "bid_ct_00", "ask_ct_00"]
         rule: "value is null or value >= 0"
         
       # Ensure bid <= ask when both present
       bid_ask_spread:
-        rule: "bid_px is null or ask_px is null or bid_px <= ask_px"
+        rule: "bid_px_00 is null or ask_px_00 is null or bid_px_00 <= ask_px_00"
         
     # Default values
     defaults:
@@ -179,17 +172,10 @@ schema_mappings:
       
       # Symbol/Instrument identification
       instrument_id: "instrument_id"
-      symbol: "symbol"
       
       # Statistical data
       stat_type: "stat_type"
       stat_value: "price"      # Map stat_value to price field
-      
-      # Common statistics fields
-      open_interest: "quantity" # Map open_interest to quantity field
-      settlement_price: "price" # Use price field for settlement (conditional mapping)
-      high_limit: "price"      # Use price field for limits (conditional mapping)
-      low_limit: "price"       # Use price field for limits (conditional mapping)
       
       # Metadata
       sequence: "sequence"
@@ -199,12 +185,7 @@ schema_mappings:
     transformations:
       # Validate statistical values are non-negative when present
       stat_value_validation:
-        fields: ["stat_value", "settlement_price", "high_limit", "low_limit"]
-        rule: "value is null or value >= 0"
-        
-      # Validate open interest is non-negative
-      open_interest_validation:
-        fields: ["open_interest"]
+        fields: ["price"]
         rule: "value is null or value >= 0"
         
     # Default values

@@ -77,7 +77,40 @@ This document captures key lessons learned and improvements made during the impl
 - **Testing Strategy:** Tests covered initialization, configuration validation, connection management, data fetching (success and failure), date chunking logic, and proper error handling.
 - **Final Result:** 19/19 tests passing with comprehensive coverage and no warnings.
 
+## 14. Critical Database Schema Alignment Issue (Story 2.3)
+- **Initial:** Created comprehensive YAML mapping configurations and RuleEngine implementation, but mapped source fields to incorrect target field names.
+- **Issue:** Field mappings used generic names (e.g., `open: "open"`, `symbol: "symbol"`) instead of actual database column names (e.g., `open: "open_price"`, no `symbol` column exists).
+- **Discovery:** The Council review caught this critical oversight before testing - mappings were misaligned with actual TimescaleDB schema defined in architecture.md.
+- **Impact:** This would have caused complete pipeline failure when the transformation engine produced dictionaries with keys that don't match database columns.
+- **Root Cause:** Insufficient cross-referencing between transformation layer design and actual database schema definitions during implementation.
+- **Fix:** 
+  - Corrected all field mappings in both test and production YAML configs to match exact database column names
+  - OHLCV: `open/high/low/close` → `open_price/high_price/low_price/close_price`
+  - Removed non-existent fields like `symbol` from all mappings
+  - Added missing required database columns with appropriate defaults
+  - Updated validation rules to reference correct field names
+- **Lesson:** **CRITICAL** - Always verify transformation output schema matches storage layer input schema exactly. The transformation layer is the bridge between external data formats and internal storage - both sides must align perfectly.
+- **Process Improvement:** Add explicit schema validation step to ensure mapping configurations match database schemas before implementation.
+
+## 15. Critical Data Integrity Fixes: Timezone and Precision Handling (Story 2.3)
+- **Issue Discovery:** During implementation review, identified two critical data integrity risks that could cause silent errors:
+  1. **Timezone Handling:** System assumed UTC timestamps without verification, risking off-by-hours errors if Databento client returns naive datetimes
+  2. **Decimal Precision:** Need to verify all financial data uses Decimal type throughout pipeline to prevent precision loss
+- **Timezone Findings:** 
+  - ✅ **Good:** RuleEngine and YAML configs were designed for UTC normalization
+  - ❌ **Risk:** No validation that incoming timestamps are timezone-aware; naive datetime assumptions could cause timing errors
+- **Precision Findings:**
+  - ✅ **Good:** All Pydantic models correctly use `Decimal` for price fields (open, high, low, close, vwap, bid_px, ask_px, stat_value, etc.)
+  - ✅ **Good:** Database schema uses `NUMERIC` type to preserve precision
+- **Fixes Implemented:**
+  - **Pydantic Models:** Added `@field_validator` to all datetime fields in all models to ensure timezone-aware conversion (naive → UTC)
+  - **RuleEngine:** Enhanced `_transform_field_value()` to properly handle naive datetime conversion with logging warnings
+  - **RuleEngine:** Updated `_apply_global_transformations()` to ensure all output timestamps are timezone-aware UTC
+  - **Logging:** Added warning logs when converting naive datetimes to help identify data source issues
+- **Lesson:** **CRITICAL** - Never assume data source behavior. Always validate assumptions about timezone-awareness and data types at the earliest possible point in the pipeline.
+- **Process Improvement:** Add explicit data integrity checks for timezone-awareness and numeric precision in transformation layer tests.
+
 ---
 
 **Summary:**
-Story 2.2 demonstrated successful API adapter implementation with robust error handling, proper architectural patterns, and comprehensive testing. Key learnings include the importance of running tests early in development, proper placement of shared data models, staying current with framework updates (Pydantic v2), and resolving environment conflicts promptly. The DatabentoAdapter is now production-ready with excellent test coverage and modern coding practices. 
+Stories 2.2 and 2.3 demonstrated successful API adapter implementation and transformation rule engine development, but highlighted a critical lesson about schema alignment between pipeline layers. While the technical implementation was solid (comprehensive YAML configurations, robust RuleEngine with validation, proper error handling), the oversight of misaligned database field mappings would have caused complete pipeline failure. This emphasizes the importance of architectural cross-validation and the need for the transformation layer to serve as an exact bridge between external formats and internal storage schemas. The Council's review process proved invaluable in catching this critical issue before testing. 
