@@ -502,7 +502,22 @@ daily_ohlcv_data Hypertable
 This table stores daily OHLCV data, as defined in the initial MVP scope.
 
 ```sql
+CREATE TABLE IF NOT EXISTS daily_ohlcv_data (
+   ts_event TIMESTAMPTZ NOT NULL,
+   instrument_id INTEGER NOT NULL,
+   open_price NUMERIC NOT NULL,
+   high_price NUMERIC NOT NULL,
+   low_price NUMERIC NOT NULL,
+   close_price NUMERIC NOT NULL,
+   volume BIGINT NOT NULL,
+   trade_count INTEGER NULL,
+   vwap NUMERIC NULL,
+   granularity VARCHAR(10) NOT NULL,
+   data_source VARCHAR(50) NOT NULL,
+   PRIMARY KEY (instrument_id, ts_event, granularity)
+);
 SELECT create_hypertable('daily_ohlcv_data', by_range('ts_event', chunk_time_interval => INTERVAL '7 days'), if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_daily_ohlcv_instrument_time ON daily_ohlcv_data (instrument_id, ts_event DESC);
 ```
 
 trades_data Hypertable

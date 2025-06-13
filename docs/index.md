@@ -13,4 +13,4 @@ This project provides a robust, modular framework for ingesting, transforming, s
 - [Modules](modules/)
 - [API](api/)
 - [Epics & Stories](epics/)
-
+- [TimeScaleDB Schemas](schemas.md)
