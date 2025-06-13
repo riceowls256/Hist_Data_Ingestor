@@ -1,35 +1,43 @@
-from pathlib import Path
 import yaml
-from pydantic import BaseSettings, Field, ValidationError
+from pathlib import Path
+from pydantic import Field, ValidationError
+from pydantic_settings import BaseSettings
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / 'configs' / 'system_config.yaml'
 
 class DBConfig(BaseSettings):
-    user: str = Field(..., env='TIMESCALEDB_USER')
-    password: str = Field(..., env='TIMESCALEDB_PASSWORD')
-    host: str = Field('localhost', env='TIMESCALEDB_HOST')
-    port: int = Field(5432, env='TIMESCALEDB_PORT')
-    dbname: str = Field('hist_data_ingestor', env='TIMESCALEDB_DBNAME')
+    user: str
+    password: str
+    host: str
+    port: int
+    dbname: str
 
     class Config:
-        env_prefix = ''
-        case_sensitive = False
+        env_prefix = 'TIMESCALEDB_'
+        env_file = '.env'
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
 
-class LoggingConfig(BaseSettings):
-    level: str = Field('INFO', env='LOG_LEVEL')
-    file: str = Field('logs/app.log')
-
-    class Config:
-        env_prefix = ''
-        case_sensitive = False
+    def get_uri(self):
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
 
 class APIConfig(BaseSettings):
-    ib_api_key: str = Field(..., env='IB_API_KEY')
-    databento_api_key: str = Field(..., env='DATABENTO_API_KEY')
+    ib_api_key: str
+    databento_api_key: str
 
     class Config:
-        env_prefix = ''
-        case_sensitive = False
+        env_file = '.env'
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
+
+class LoggingConfig(BaseSettings):
+    level: str = 'INFO'
+    file: str = 'logs/app.log'
+
+    class Config:
+        env_file = '.env'
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
 
 class SystemConfig(BaseSettings):
     db: DBConfig
@@ -38,11 +46,17 @@ class SystemConfig(BaseSettings):
 
     class Config:
         env_nested_delimiter = '__'
-        case_sensitive = False
+        env_file = '.env'
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
 
 class ConfigManager:
     """
-    Loads system configuration from YAML file, with environment variables automatically overriding defaults via Pydantic BaseSettings.
+    Loads system configuration by layering sources:
+    1. Default values in Pydantic models.
+    2. Values from system_config.yaml.
+    3. Values from environment variables (or .env file).
+    Pydantic handles the priority automatically.
     """
     def __init__(self, config_path=CONFIG_PATH):
         self.config_path = config_path
@@ -51,10 +65,17 @@ class ConfigManager:
     def _load_config(self):
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
+        
         with open(self.config_path, 'r') as f:
-            raw = yaml.safe_load(f)
+            yaml_config = yaml.safe_load(f) or {}
+
         try:
-            return SystemConfig(**raw)
+            # Correctly initialize nested models from the YAML dictionary
+            return SystemConfig(
+                db=DBConfig(**yaml_config.get('db', {})),
+                logging=LoggingConfig(**yaml_config.get('logging', {})),
+                api=APIConfig(**yaml_config.get('api', {}))
+            )
         except ValidationError as e:
             raise ValueError(f"Config validation error: {e}")
 
