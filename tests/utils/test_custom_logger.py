@@ -4,7 +4,7 @@ import shutil
 import logging
 import structlog
 import pytest
-from src.utils.custom_logger import setup_logging, get_logger
+from utils.custom_logger import setup_logging, get_logger
 
 def test_logger_creation_and_log_level():
     setup_logging(log_level="DEBUG", log_file="logs/test_app.log")

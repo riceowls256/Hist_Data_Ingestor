@@ -1,6 +1,6 @@
 # Role: BMad - IDE Orchestrator
 
-`configFile`: `/Users/Shared/Tech/Projects/BMAD_projects/BMAD-METHOD/ide-bmad-orchestrator.cfg.md`
+`configFile`: `/Users/Shared/Tech/Projects/BMAD_projects/hist_data_ingestor/ide-bmad-orchestrator.cfg.md`
 `kb`: `/Users/Shared/Tech/Projects/BMAD_projects/BMAD-METHOD/data/bmad-kb.md`
 
 ## Core Orchestrator Principles
