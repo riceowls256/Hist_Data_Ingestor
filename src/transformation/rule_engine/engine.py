@@ -250,20 +250,14 @@ class RuleEngine:
     def _evaluate_rule(self, value: Any, rule: str) -> bool:
         """Evaluate a validation rule against a single value."""
         try:
-            # Replace 'value' in rule with actual value for evaluation
-            # Handle None values
-            if 'value is null' in rule:
-                return value is None
-            if 'value is not null' in rule:
-                return value is not None
-                
-            # For non-null checks, skip if value is None
-            if value is None:
-                return True
+            # Create evaluation context with value and null alias
+            eval_context = {
+                'value': value,
+                'null': None  # Allow 'null' syntax in rules
+            }
             
-            # Replace value in rule string and evaluate
-            eval_rule = rule.replace('value', str(value))
-            return eval(eval_rule)
+            # Evaluate the rule with proper context
+            return eval(rule, {"__builtins__": {}}, eval_context)
             
         except Exception as e:
             logger.error(f"Error evaluating rule '{rule}' with value {value}: {e}")
@@ -272,17 +266,17 @@ class RuleEngine:
     def _evaluate_data_rule(self, data: Dict[str, Any], rule: str) -> bool:
         """Evaluate a validation rule against the entire data dictionary."""
         try:
-            # Create evaluation context with data fields
-            eval_context = {}
-            for key, value in data.items():
-                if value is not None:
-                    eval_context[key] = value
+            # Create a safe evaluation context from the data dictionary.
+            # This ensures that keys with 'None' values are available for 'is null' checks.
+            eval_context = data.copy()
+            eval_context['null'] = None  # Allow 'null' syntax in rules
             
-            # Evaluate rule in context
+            # Evaluate the rule within the context of the data.
+            # The __builtins__ are restricted for security.
             return eval(rule, {"__builtins__": {}}, eval_context)
             
         except Exception as e:
-            logger.error(f"Error evaluating data rule '{rule}': {e}")
+            logger.error(f"Error evaluating data rule '{rule}' with data {data}: {e}")
             return False
     
     def _transform_field_value(self, value: Any, field_name: str) -> Any:

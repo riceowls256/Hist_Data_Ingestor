@@ -110,7 +110,32 @@ This document captures key lessons learned and improvements made during the impl
 - **Lesson:** **CRITICAL** - Never assume data source behavior. Always validate assumptions about timezone-awareness and data types at the earliest possible point in the pipeline.
 - **Process Improvement:** Add explicit data integrity checks for timezone-awareness and numeric precision in transformation layer tests.
 
+## 16. Test-Driven Debugging and Validation Logic Robustness (Story 2.3, Task 4)
+- **Context:** Created comprehensive unit test suite for RuleEngine transformation logic with 6 tests covering all 4 Databento schemas, business rules, and edge cases.
+- **Critical Issue Discovered:** Tests revealed a fundamental flaw in RuleEngine's validation logic that would have caused production failures.
+- **Specific Problem:** `_evaluate_data_rule` method filtered out None values from eval context, breaking `is null` validation checks:
+  ```python
+  # The flawed logic
+  eval_context = {}
+  for key, value in data.items():
+      if value is not None:  # <--- This broke null checks
+          eval_context[key] = value
+  ```
+- **Failure Symptoms:** Rules like `bid_px_00 is null or ask_px_00 is null or bid_px_00 <= ask_px_00` failed with `NameError: name 'bid_px_00' is not defined` because None values were excluded from evaluation context.
+- **Expert Council Diagnosis:** Diego "El Coyote" Rivera immediately identified that eval() couldn't access variables with None values because they were filtered out of the context dictionary.
+- **Solutions Applied:**
+  - **Data Rule Evaluation:** Changed to `eval_context = data.copy()` to include all values, including None
+  - **Field Rule Evaluation:** Replaced string substitution with proper eval context including `'null': None` alias for rule syntax
+  - **Enhanced Error Logging:** Added full data dictionary to error messages for better debugging
+- **Testing Results:** All 6 tests now pass (100% success rate) with robust null value handling for both field-level and global validation rules.
+- **Critical Lessons:**
+  - **Tests as Quality Gates:** Unit tests are not just for green checkmarks - they reveal critical logic flaws before production
+  - **Expert Reviews Matter:** Diego's immediate diagnosis saved hours of debugging and revealed the exact root cause
+  - **Null Handling is Critical:** Proper handling of None/null values in validation logic is essential for edge case robustness
+  - **Complete Eval Contexts:** When using eval() for dynamic rule evaluation, the context must include all variables referenced in rules
+- **Long-term Impact:** RuleEngine now handles all null scenarios correctly, preventing silent validation failures and ensuring reliable data quality checks throughout the transformation pipeline.
+
 ---
 
 **Summary:**
-Stories 2.2 and 2.3 demonstrated successful API adapter implementation and transformation rule engine development, but highlighted a critical lesson about schema alignment between pipeline layers. While the technical implementation was solid (comprehensive YAML configurations, robust RuleEngine with validation, proper error handling), the oversight of misaligned database field mappings would have caused complete pipeline failure. This emphasizes the importance of architectural cross-validation and the need for the transformation layer to serve as an exact bridge between external formats and internal storage schemas. The Council's review process proved invaluable in catching this critical issue before testing. 
+Stories 2.2 and 2.3 demonstrated successful API adapter implementation and transformation rule engine development, while revealing critical insights about quality assurance processes. The technical implementation was solid (comprehensive YAML configurations, robust RuleEngine with validation, proper error handling), but highlighted two essential quality gates: (1) Schema alignment verification between pipeline layers through The Council's architectural review, and (2) Comprehensive unit testing to reveal logic flaws in validation systems. The schema misalignment would have caused complete pipeline failure, while the null value handling bug would have caused silent validation failures. Both issues were caught and fixed before production, demonstrating the value of multi-layered quality processes: expert review + comprehensive testing = robust, production-ready systems. 
