@@ -19,10 +19,12 @@ from tenacity import (
     retry_if_exception_type,
     RetryError,
 )
+from src.utils.custom_logger import get_logger
 
 from src.ingestion.api_adapters.base_adapter import BaseAdapter
 from src.storage.models import DATABENTO_SCHEMA_MODEL_MAPPING
 
+logger = get_logger(__name__)
 
 class DatabentoAdapter(BaseAdapter):
     """
@@ -41,8 +43,7 @@ class DatabentoAdapter(BaseAdapter):
             config: Configuration dictionary containing API settings and retry policy
         """
         super().__init__(config)
-        self.log = structlog.get_logger(self.__class__.__name__)
-        self._client: Optional[databento.Historical] = None
+        self.client = None
         
         # Extract retry policy from config
         retry_config = self.config.get("retry_policy", {})
@@ -74,27 +75,29 @@ class DatabentoAdapter(BaseAdapter):
 
     def connect(self) -> None:
         """
-        Establish connection to the Databento API.
-        
-        Raises:
-            ConnectionError: If connection cannot be established
-            ValueError: If configuration is invalid
+        Connects to the Databento API.
+        It can be configured with a direct 'key' or a 'key_env_var' to read from the environment.
         """
-        if not self.validate_config():
-            raise ValueError("Invalid configuration for DatabentoAdapter")
+        api_config = self.config.get('api', {})
+        api_key = api_config.get('key')
+
+        if not api_key:
+            key_env_var = api_config.get('key_env_var')
+            if not key_env_var:
+                logger.error("API config must contain either 'key' or 'key_env_var'")
+                raise ValueError("Invalid configuration: Missing API key source.")
             
-        try:
-            api_config = self.config.get("api", {})
-            key_env_var = api_config.get("key_env_var")
             api_key = os.getenv(key_env_var)
-            
-            # Initialize the databento client
-            self._client = databento.Historical(key=api_key)
-            self.log.info("Successfully connected to Databento API")
-            
+            if not api_key:
+                logger.error(f"Environment variable '{key_env_var}' not set for Databento API key.")
+                raise ValueError(f"Missing API key in environment variable {key_env_var}")
+
+        try:
+            self.client = databento.Historical(key=api_key)
+            logger.info("Successfully connected to Databento API")
         except Exception as e:
-            self.log.error("Failed to connect to Databento API", error=str(e))
-            raise ConnectionError("Could not establish connection to Databento API") from e
+            logger.error(f"Failed to connect to Databento API: {e}")
+            raise
 
     def _create_retry_decorator(self):
         """Create a retry decorator with current configuration."""
@@ -140,14 +143,14 @@ class DatabentoAdapter(BaseAdapter):
             ConnectionError: If client is not connected
             RuntimeError: If API call fails after retries
         """
-        if not self._client:
+        if not self.client:
             raise ConnectionError("Client not connected. Call connect() first.")
             
         retry_decorator = self._create_retry_decorator()
         
         @retry_decorator
         def _make_api_call():
-            self.log.info(
+            logger.info(
                 "Fetching data chunk from Databento API",
                 dataset=dataset,
                 schema=schema,
@@ -155,7 +158,7 @@ class DatabentoAdapter(BaseAdapter):
                 start_date=start_date,
                 end_date=end_date
             )
-            return self._client.timeseries.get_range(
+            return self.client.timeseries.get_range(
                 dataset=dataset,
                 symbols=symbols,
                 schema=schema,
@@ -167,7 +170,7 @@ class DatabentoAdapter(BaseAdapter):
         try:
             return _make_api_call()
         except RetryError as e:
-            self.log.error(
+            logger.error(
                 "Failed to fetch data after all retries",
                 dataset=dataset,
                 schema=schema,
@@ -213,7 +216,7 @@ class DatabentoAdapter(BaseAdapter):
             ))
             current_start = current_end
             
-        self.log.info(f"Generated {len(chunks)} date chunks", chunks=len(chunks))
+        logger.info(f"Generated {len(chunks)} date chunks", chunks=len(chunks))
         return chunks
 
     def fetch_historical_data(self, job_config: Dict[str, Any]) -> Iterator[BaseModel]:
@@ -231,7 +234,7 @@ class DatabentoAdapter(BaseAdapter):
             ConnectionError: If API connection fails
             RuntimeError: If data fetching fails
         """
-        if not self._client:
+        if not self.client:
             raise ConnectionError("Client not connected. Call connect() first.")
             
         # Extract job parameters
@@ -252,7 +255,7 @@ class DatabentoAdapter(BaseAdapter):
         if not pydantic_model:
             raise ValueError(f"Unsupported schema: {schema}")
             
-        self.log.info(
+        logger.info(
             "Starting data fetch job",
             dataset=dataset,
             schema=schema,
@@ -288,7 +291,13 @@ class DatabentoAdapter(BaseAdapter):
                 for record in data_store:
                     try:
                         # Convert databento record to dictionary
-                        record_dict = record.as_dict()
+                        # Use direct attribute access for databento records
+                        record_dict = {}
+                        for attr in dir(record):
+                            if not attr.startswith('_') and not callable(getattr(record, attr)):
+                                # Skip helper/metadata fields, focus on actual data
+                                if attr not in ['hd', 'publisher_id', 'rtype', 'size_hint', 'record_size']:
+                                    record_dict[attr] = getattr(record, attr)
                         
                         # Validate with Pydantic model
                         validated_record = pydantic_model.model_validate(record_dict)
@@ -299,7 +308,7 @@ class DatabentoAdapter(BaseAdapter):
                         
                     except ValidationError as e:
                         validation_errors += 1
-                        self.log.warning(
+                        logger.warning(
                             "Pydantic validation failed for record",
                             schema=schema,
                             error=str(e),
@@ -307,8 +316,15 @@ class DatabentoAdapter(BaseAdapter):
                         )
                         # Continue processing other records
                         continue
+                    except Exception as e:
+                        logger.error(
+                            "Failed to process record",
+                            error=str(e),
+                            record_type=type(record).__name__
+                        )
+                        continue
                         
-                self.log.info(
+                logger.info(
                     "Completed chunk processing",
                     chunk_start=chunk_start,
                     chunk_end=chunk_end,
@@ -316,7 +332,7 @@ class DatabentoAdapter(BaseAdapter):
                 )
                 
             except Exception as e:
-                self.log.error(
+                logger.error(
                     "Failed to process date chunk",
                     chunk_start=chunk_start,
                     chunk_end=chunk_end,
@@ -325,7 +341,7 @@ class DatabentoAdapter(BaseAdapter):
                 # Continue with next chunk rather than failing entire job
                 continue
                 
-        self.log.info(
+        logger.info(
             "Data fetch job completed",
             total_records=total_records,
             validation_errors=validation_errors,
@@ -338,6 +354,6 @@ class DatabentoAdapter(BaseAdapter):
         
         For Databento, this is a no-op as the client is stateless.
         """
-        if self._client:
-            self._client = None
-            self.log.info("Databento client disconnected")
+        if self.client:
+            self.client = None
+            logger.info("Databento client disconnected")
