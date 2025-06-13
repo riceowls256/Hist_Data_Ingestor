@@ -11,3 +11,4 @@ docker
 python-dotenv
 pandera
 pyyaml
+databento-python>=0.52.0

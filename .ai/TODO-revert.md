@@ -1,3 +1,14 @@
-# Debug Log / TODO Revert
+# Debug Log - TODO Revert
 
-- Use this file to track temporary debug code, issues, and revert notes. 
+## Active Issues
+
+(None currently)
+
+## Completed Reversions
+
+### RESOLVED: Testing Environment - numpy/conda Conflict
+- **Story**: 2.2  
+- **Problem**: Could not run unit tests due to numpy library loading error
+- **Solution**: Uninstalled and reinstalled numpy, pandas, databento packages
+- **Result**: All 19 tests now pass successfully
+- **Date Resolved**: 2024-12-19 

@@ -1,4 +1,4 @@
-# Project Retrospective: Lessons Learned (Story 1.3 – Dockerized Development Environment)
+# Project Retrospective: Lessons Learned
 
 ## Overview
 This document captures key lessons learned and improvements made during the implementation of Story 1.3. It is intended as a living reference for future stories, agent handoffs, and contributors.
@@ -45,7 +45,39 @@ This document captures key lessons learned and improvements made during the impl
 - **Lesson:** Ensuring the correct PYTHONPATH and import structure is critical for consistent logger usage and successful test execution in a src-layout project.
 - **Fix:** Standardized on using PYTHONPATH=src for test runs and updated imports in test files to match the project structure. Documented this in the story and README for future contributors.
 
+## 9. Databento API Adapter Implementation (Story 2.2)
+- **Initial:** Created complete DatabentoAdapter class with comprehensive features and robust error handling.
+- **Lesson:** The adapter implementation showcased effective patterns for API adapters: environment-based configuration, date chunking for large requests, retry logic with exponential backoff, and proper inheritance from BaseAdapter interface.
+- **Key Features:** Successfully implemented context manager support, multi-symbol batch processing, comprehensive error handling with structured logging, and DBN record to Pydantic model conversion for all schemas (OHLCV, Trades, TBBO, Statistics).
+
+## 10. Architectural Improvement: Model Placement (Story 2.2)
+- **Initial:** Pydantic models were created in `src/ingestion/api_adapters/databento_models.py`.
+- **Lesson:** Data models shouldn't live in api_adapters directory as they serve as common data contracts for the entire pipeline (TransformationEngine, Validator, DataStorageLayer). API adapters should focus on data retrieval, not data schema definition.
+- **Fix:** Moved models from `src/ingestion/api_adapters/databento_models.py` to `src/storage/models.py` for better architectural separation and reusability across the entire pipeline.
+
+## 11. Critical Testing Oversight and Environment Resolution (Story 2.2)
+- **Initial:** Implemented comprehensive functionality but failed to run tests during development - critical oversight in dev workflow.
+- **Lesson:** Tests should be run early and frequently during development, not just at the end. When finally running tests, encountered numpy/conda environment conflict causing import errors.
+- **Environment Issue:** `ImportError: Error importing numpy: you should not try to import numpy from its source directory.` caused by conda/pip package conflicts.
+- **Fix:** Resolved by uninstalling and reinstalling packages cleanly: `pip uninstall -y numpy pandas databento databento-dbn` followed by `pip install numpy pandas databento`.
+- **Outcome:** All 19 tests passed after fixing a minor date chunking logic error (expected chunk count correction).
+
+## 12. Pydantic v2 Modernization (Story 2.2)
+- **Initial:** Models used deprecated `json_encoders` in `model_config = ConfigDict()`, generating 24 deprecation warnings.
+- **Lesson:** Staying current with framework updates is important for maintainability and avoiding deprecated features.
+- **Fix:** Replaced deprecated `json_encoders` with modern Pydantic v2 `@field_serializer` decorators:
+  - Added `@field_serializer` for `datetime` fields → ISO format strings using `isoformat()`
+  - Added `@field_serializer` for `Decimal` fields → string representations using `str()`
+  - Used `when_used='json'` parameter to ensure serializers only activate during JSON serialization
+- **Outcome:** Eliminated all deprecation warnings while maintaining backward compatibility and proper JSON serialization.
+
+## 13. Comprehensive Testing and Error Resolution (Story 2.2)
+- **Initial:** Created comprehensive test suite with 19 test cases covering all adapter functionality.
+- **Lesson:** Good test coverage includes success paths, error conditions, configuration validation, retry logic, and context manager behavior.
+- **Testing Strategy:** Tests covered initialization, configuration validation, connection management, data fetching (success and failure), date chunking logic, and proper error handling.
+- **Final Result:** 19/19 tests passing with comprehensive coverage and no warnings.
+
 ---
 
 **Summary:**
-We improved our Docker Compose and entrypoint practices, clarified environment variable management, and adopted a more granular, review-driven workflow. These changes not only fixed immediate issues but also set a higher standard for future stories and agent handoffs. 
+Story 2.2 demonstrated successful API adapter implementation with robust error handling, proper architectural patterns, and comprehensive testing. Key learnings include the importance of running tests early in development, proper placement of shared data models, staying current with framework updates (Pydantic v2), and resolving environment conflicts promptly. The DatabentoAdapter is now production-ready with excellent test coverage and modern coding practices. 
