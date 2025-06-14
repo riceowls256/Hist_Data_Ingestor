@@ -29,3 +29,13 @@ venv/
 # Logs
 logs/*.log
 !logs/.gitkeep 
+
+# Data files - CSV exports and test data
+*.csv
+tests/hist_api/*.csv
+data_temp/
+dlq/
+
+# Large data files
+tests/hist_api/all_symbols_*.csv
+tests/hist_api/es_symbols_discovered.csv 
