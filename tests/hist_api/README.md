@@ -1,156 +1,135 @@
-# Historical API Testing Framework
+# Databento Historical API Testing Suite
 
-## Overview
-Comprehensive testing suite for validating Databento API integration, schema compliance, and production readiness. Contains specialized test scripts for different data types and schemas.
+## 📁 Organized Test Structure
 
-## Quick Start
+This directory contains a comprehensive suite of tests and tools for validating Databento Historical API integration. All files have been organized into logical categories for easier navigation and maintenance.
+
+## 🗂️ Folder Structure
+
+### 📡 `basic_connectivity/`
+**Core connection and authentication tests**
+- `test_api_connection.py` - Basic connectivity validation
+- `debug_databento_record.py` - Record structure debugging
+
+### 🔍 `schema_testing/`
+**Schema-specific validation tests**
+- `test_statistics_schema.py` - Statistics schema testing
+- `test_definitions_schema.py` - Definitions schema comprehensive testing
+- `test_status_schema.py` - Status schema validation
+- `test_cme_statistics.py` - CME Globex statistics verification
+- `analyze_stats_fields.py` - Statistics fields analysis
+
+### 🎯 `symbology/`
+**Advanced symbology implementation and testing**
+- `debug_definition_schema.py` - **Parent symbology** demonstration (ES.FUT)
+- `test_continuous_contracts.py` - **Continuous contracts** testing (ES.v.0)
+- `test_futures_api.py` - Futures contract testing across multiple products
+
+### 🔬 `analysis_tools/`
+**Research and analysis utilities**
+- `complete_workflow_demo.py` - End-to-end workflow demonstration
+- `simple_symbol_discovery.py` - Basic symbol discovery tools
+- `dataset_symbol_discovery.py` - Advanced dataset exploration
+- `es_liquidity_analysis.py` - E-mini S&P 500 liquidity analysis
+- `es_liquidity_focused.py` - Focused liquidity research
+- `tick_size_demo.py` - Tick size and price increment analysis
+- `analyze_contract_endings.py` - Contract naming pattern analysis
+
+### 🧪 `definition_research/`
+**Definition schema research and utilities**
+- `test_definitions_*` (multiple files) - Various definition schema approaches
+- `definition_schema_utility.py` - Definition schema helper functions
+- `contract_mapping_utils.py` - Contract mapping utilities
+
+### 📊 `csv_data/`
+**Generated data files and analysis results**
+- `es_symbols_discovered.csv` - ES symbol discovery results
+- `all_symbols_glbx_mdp3.csv` - Complete GLBX symbol list
+- `contract_endings_analysis.csv` - Contract naming analysis
+- `es_futures_contracts.csv` - ES futures contract details
+- `futures_contracts_sample.csv` - Sample contract data
+- `definition_samples.csv` - Definition schema samples
+
+### 📚 `documentation/`
+**Analysis summaries and guides**
+- `sample_data_structure.md` - Data structure documentation
+- `COMPREHENSIVE_ANALYSIS_SUMMARY.md` - Complete analysis overview
+- `SYMBOL_DISCOVERY_ANALYSIS.md` - Symbol discovery findings
+- `COMPLETE_ANALYSIS_SUMMARY.md` - Analysis summary
+- `DEFINITION_SCHEMA_ANALYSIS_SUMMARY.md` - Definition schema insights
+
+## 🚀 Quick Start
+
+### Essential Tests (Start Here)
 ```bash
-# Ensure environment is configured
-source venv/bin/activate
-export DATABENTO_API_KEY="your_key_here"
+# 1. Basic connectivity
+python basic_connectivity/test_api_connection.py
 
-# Run basic connectivity test
-python tests/hist_api/test_api_connection.py
+# 2. Parent symbology (RECOMMENDED)
+python symbology/debug_definition_schema.py
+
+# 3. Continuous contracts (RECOMMENDED) 
+python symbology/test_continuous_contracts.py
+
+# 4. Schema validation
+python schema_testing/test_statistics_schema.py
 ```
 
-## Test Scripts
-
-### Core Tests
-- **`test_api_connection.py`** - Basic connectivity and authentication validation
-- **`test_futures_api.py`** - Comprehensive futures testing across multiple schemas
-
-### Schema-Specific Tests  
-- **`test_statistics_schema.py`** - Statistics schema exploration
-- **`analyze_stats_fields.py`** - Complete statistics field documentation
-- **`test_cme_statistics.py`** - CME Globex compliance verification
-- **`test_status_schema.py`** - Market status and trading state validation
-
-### Definition Schema Tests (Special Handling Required)
-- **`test_definitions_schema.py`** - Standard definition testing (shows 0 results)
-- **`test_definitions_broad.py`** - Discovers 36.6M+ records exist
-- **`test_definitions_analysis.py`** - Record structure analysis
-- **`test_definitions_detailed.py`** - Symbology mapping attempts  
-- **`test_definitions_fixed.py`** - **WORKING SOLUTION** with manual filtering
-
-## ⚠️ Critical Discovery: Definition Schema
-
-### Problem
-Symbol filtering is **broken** for the definition schema:
-```python
-# This returns 0 records (incorrectly)
-data = client.timeseries.get_range(
-    schema="definition",
-    symbols=["ES.c.0"]  # ← Filtering doesn't work!
-)
-```
-
-### Solution
-Query all records, then filter manually by instrument_id:
-```python
-# Correct approach
-data = client.timeseries.get_range(
-    schema="definition",
-    # No symbols parameter!
-    start="2024-12-01",
-    end="2024-12-31"
-)
-
-# Filter manually
-for record in data:
-    if record.instrument_id == 4916:  # ES instrument ID
-        # Process definition record
-        pass
-```
-
-### Results
-- **Total Records**: 36.6M+ definition records available
-- **ES Definitions**: 53 records with complete contract specifications
-- **Data Quality**: Rich metadata (tick sizes, multipliers, limits, expiration)
-
-### Getting Instrument IDs
-1. Use `status` schema: `instrument_id: 4916` for ES
-2. Use symbology API to map symbols to IDs
-3. Cross-reference between schemas
-
-## Validated Schemas & Performance
-
-| Schema | Records | Time | Use Case |
-|--------|---------|------|----------|
-| ohlcv-1d | 1 | < 1s | Daily analysis |
-| ohlcv-1h | 23 | < 1s | Intraday patterns |
-| trades | 493K+ | ~10s | High-frequency analysis |
-| tbbo | 493K+ | ~10s | Spread analysis |
-| statistics | 6-12 | < 1s | Settlement/OI data |
-| **definition** | **36.6M+** | **~3min** | **Contract specs** |
-| status | 33 | < 1s | Market state |
-
-## CME Globex Compliance ✅
-Successfully validated all 10/10 expected CME statistics types:
-- Opening Price, Settlement Price, Open Interest
-- Session High/Low, Cleared Volume
-- Bid/Offer levels, Fixing Price
-
-## Common Issues & Solutions
-
-### Symbol Format
-- ❌ Wrong: `ES.FUT` 
-- ✅ Correct: `ES.c.0`
-
-### Environment Issues
+### Advanced Analysis
 ```bash
-# Fix broken environment
-rm -rf venv
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Comprehensive workflow
+python analysis_tools/complete_workflow_demo.py
+
+# Liquidity analysis
+python analysis_tools/es_liquidity_analysis.py
+
+# Contract research
+python analysis_tools/analyze_contract_endings.py
 ```
 
-### Date Range Errors
-- Error: `end must be after start`
-- Fix: Verify date order in script configuration
+## 🎯 Key Capabilities Validated
 
-## Production Ready ✅
-- Authentication and connection management
-- Multi-schema data retrieval  
-- CME Globex compliance (10/10 statistics)
-- High-volume data handling (493K+ records)
-- Comprehensive error handling and retry logic
+### ✅ **Parent Symbology** (Recommended)
+- **Efficiency:** 14,743x data reduction vs ALL_SYMBOLS
+- **Coverage:** Complete product families (futures + spreads)
+- **Usage:** `ES.FUT` + `stype_in="parent"`
 
-## Configuration
+### ✅ **Continuous Contracts** (Recommended)
+- **Purpose:** Automatic rollover tracking for time-series
+- **Validation:** Real rollover behavior during expiry weeks
+- **Usage:** `ES.v.0` + `stype_in="continuous"`
 
-Most scripts use configurable variables at the top for easy modification:
+### ✅ **Multi-Product Support**
+- E-mini S&P 500 (ES), Crude Oil (CL), Natural Gas (NG), Gold (GC)
+- All schemas: OHLCV, Trades, TBBO, Statistics, Definitions, Status
+- Production-tested with real market data
 
-```python
-# Example from test_futures_api.py
-SYMBOL = "ES.c.0"           # Contract symbol
-DATASET = "GLBX.MDP3"       # CME Globex dataset
-CONTRACT_NAME = "E-mini S&P 500"  # Display name
-```
+## 🏗️ Project Integration
 
-## Supported Contracts
+These tests support the main project's ingestion pipeline:
+- **Source:** `src/ingestion/api_adapters/databento_adapter.py`
+- **Config:** `configs/api_specific/databento_config.yaml`
+- **Mappings:** `src/transformation/mapping_configs/databento_mappings.yaml`
 
-- `ES.c.0` - E-mini S&P 500
-- `CL.c.0` - Crude Oil WTI  
-- `NG.c.0` - Natural Gas
-- `GC.c.0` - Gold
-- `ZN.c.0` - 10-Year Treasury Notes
-- `6E.c.0` - Euro FX
+## 📈 Performance Benchmarks
 
-## Schema Coverage
+| Approach | Records | Time | Use Case |
+|----------|---------|------|----------|
+| Parent symbology | 41 (ES.FUT) | ~2.2s | Product family analysis |
+| Continuous contracts | 12 (ES.v.0) | <1s | Time-series tracking |
+| Schema testing | Various | <10s | Validation |
 
-✅ **OHLCV (Daily & Hourly):** Price/volume bars  
-✅ **Trades:** Individual trade events  
-✅ **TBBO:** Top-of-book quotes with trades  
-✅ **Statistics:** Settlement prices, open interest, session highs/lows  
-✅ **Definitions:** Instrument metadata and contract specifications  
+## 🛠️ Maintenance
 
-## Expected Results
+- **Core files:** Keep `symbology/` tests updated with new products
+- **Documentation:** Update `docs/api/databento_testing_guide.md` with findings
+- **Data files:** Archive old CSV files periodically
+- **Research:** Move experimental files to `analysis_tools/` or `definition_research/`
 
-✅ **CME Statistics Coverage:** 10/10 statistics types confirmed  
-✅ **Performance Benchmarks:** Up to 493K records in ~10 seconds  
-✅ **Data Quality:** All validation checks pass  
-✅ **Schema Support:** OHLCV, Trades, TBBO, Statistics, Definitions
+## 💡 Best Practices
 
-## Documentation
-
-See `docs/api/databento_testing_guide.md` for comprehensive testing procedures and troubleshooting. 
+1. **Start with symbology tests** for new products
+2. **Use parent symbology** for comprehensive analysis
+3. **Use continuous contracts** for time-series applications
+4. **Validate schema changes** with schema_testing suite
+5. **Document findings** in the main testing guide 
