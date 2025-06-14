@@ -14,6 +14,10 @@ from decimal import Decimal
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ValidationError
+import pandas as pd
+import pandera.pandas as pa
+
+from src.transformation.validators.databento_validators import get_validation_schema
 
 # Import Databento models
 from src.storage.models import (
@@ -216,68 +220,54 @@ class RuleEngine:
         return transformed_data
     
     def _validate_transformed_data(self, data: Dict[str, Any], mapping_config: Dict[str, Any]) -> None:
-        """Apply validation rules to transformed data."""
-        transformations = mapping_config.get('transformations', {})
-        
-        for rule_name, rule_config in transformations.items():
-            try:
-                self._apply_validation_rule(data, rule_config, rule_name)
-            except ValidationRuleError as e:
-                if not self.global_settings.get('skip_validation_errors', False):
-                    raise
-                else:
-                    logger.warning(f"Validation rule '{rule_name}' failed but continuing: {e}")
+        """
+        Validate transformed data using Pandera schemas.
+        This replaces the old rule-based validation.
+        """
+        schema_name = mapping_config.get("schema_name") # Assumes schema_name is in mapping config
+        if not schema_name:
+            logger.warning("schema_name not found in mapping_config, skipping Pandera validation.")
+            return
+
+        validation_schema = get_validation_schema(schema_name)
+        if not validation_schema:
+            logger.warning(f"No Pandera validation schema found for '{schema_name}', skipping.")
+            return
+
+        try:
+            # Pandera expects a DataFrame
+            df = pd.DataFrame([data])
+            validation_schema.validate(df, lazy=True)
+        except pa.errors.SchemaErrors as err:
+            logger.error(
+                "Pandera validation failed",
+                schema=schema_name,
+                errors=err.failure_cases.to_dict(orient="records"),
+                data=data
+            )
+            # We can decide to quarantine here or let the caller handle it.
+            # For now, we raise a specific error.
+            raise ValidationRuleError(f"Pandera validation failed: {err.failure_cases}")
+        except Exception as e:
+            logger.error(
+                "An unexpected error occurred during Pandera validation",
+                error=str(e)
+            )
+            raise TransformationError(f"Unexpected validation error: {e}")
     
     def _apply_validation_rule(self, data: Dict[str, Any], rule_config: Dict[str, Any], rule_name: str) -> None:
-        """Apply a single validation rule to the data."""
-        rule = rule_config.get('rule')
-        fields = rule_config.get('fields', [])
-        
-        if fields:
-            # Field-specific validation
-            for field in fields:
-                if field in data:
-                    value = data[field]
-                    if not self._evaluate_rule(value, rule):
-                        raise ValidationRuleError(
-                            f"Validation failed for field '{field}' in rule '{rule_name}': {rule}"
-                        )
-        else:
-            # Global rule evaluation
-            if not self._evaluate_data_rule(data, rule):
-                raise ValidationRuleError(f"Global validation failed for rule '{rule_name}': {rule}")
+        """DEPRECATED: This method is no longer used with Pandera-based validation."""
+        logger.warning("Deprecated method _apply_validation_rule called. Please switch to Pandera.")
     
     def _evaluate_rule(self, value: Any, rule: str) -> bool:
-        """Evaluate a validation rule against a single value."""
-        try:
-            # Create evaluation context with value and null alias
-            eval_context = {
-                'value': value,
-                'null': None  # Allow 'null' syntax in rules
-            }
-            
-            # Evaluate the rule with proper context
-            return eval(rule, {"__builtins__": {}}, eval_context)
-            
-        except Exception as e:
-            logger.error(f"Error evaluating rule '{rule}' with value {value}: {e}")
-            return False
+        """DEPRECATED: This method is no longer used with Pandera-based validation."""
+        logger.warning("Deprecated method _evaluate_rule called.")
+        return True
     
     def _evaluate_data_rule(self, data: Dict[str, Any], rule: str) -> bool:
-        """Evaluate a validation rule against the entire data dictionary."""
-        try:
-            # Create a safe evaluation context from the data dictionary.
-            # This ensures that keys with 'None' values are available for 'is null' checks.
-            eval_context = data.copy()
-            eval_context['null'] = None  # Allow 'null' syntax in rules
-            
-            # Evaluate the rule within the context of the data.
-            # The __builtins__ are restricted for security.
-            return eval(rule, {"__builtins__": {}}, eval_context)
-            
-        except Exception as e:
-            logger.error(f"Error evaluating data rule '{rule}' with data {data}: {e}")
-            return False
+        """DEPRECATED: This method is no longer used with Pandera-based validation."""
+        logger.warning("Deprecated method _evaluate_data_rule called.")
+        return True
     
     def _transform_field_value(self, value: Any, field_name: str) -> Any:
         """Apply field-specific transformations."""
@@ -323,38 +313,51 @@ class RuleEngine:
                        schema_name: str,
                        validate: bool = True) -> List[Dict[str, Any]]:
         """
-        Transform a batch of records efficiently.
+        Transform a batch of Databento Pydantic records using the configured mapping rules.
         
         Args:
-            records: List of Databento Pydantic model instances
+            records: List of Databento Pydantic model instances to transform
             schema_name: Target schema name for transformation
             validate: Whether to apply validation rules
             
         Returns:
-            List of transformed data dictionaries
-            
-        Raises:
-            TransformationError: If any transformation fails
+            List of dictionaries containing the transformed data
         """
-        transformed_records = []
-        failed_records = []
+        transformed_batch = []
         
-        for i, record in enumerate(records):
+        for record in records:
             try:
-                transformed_data = self.transform_record(record, schema_name, validate)
-                transformed_records.append(transformed_data)
-            except (TransformationError, ValidationRuleError) as e:
-                logger.error(f"Failed to transform record {i}: {e}")
-                failed_records.append((i, record, str(e)))
-                
-                # Decide whether to continue or fail fast
-                if not self.global_settings.get('skip_validation_errors', False):
-                    raise TransformationError(f"Batch transformation failed at record {i}: {e}")
+                transformed_record = self.transform_record(
+                    record, schema_name, validate=False # Validation will be done on the batch
+                )
+                transformed_batch.append(transformed_record)
+            except TransformationError as e:
+                logger.error(f"Failed to transform record in batch: {e}")
+                # Decide on error handling: skip record, add to error list, etc.
+                continue
         
-        if failed_records:
-            logger.warning(f"Batch transformation completed with {len(failed_records)} failed records")
-        
-        return transformed_records
+        if validate and transformed_batch:
+            # Convert list of dicts to DataFrame for batch validation
+            df = pd.DataFrame(transformed_batch)
+            
+            validation_schema = get_validation_schema(schema_name)
+            if validation_schema:
+                try:
+                    validation_schema.validate(df, lazy=True)
+                except pa.errors.SchemaErrors as err:
+                    logger.error(
+                        "Pandera batch validation failed",
+                        schema=schema_name,
+                        num_failures=len(err.failure_cases),
+                        failure_details=err.failure_cases.to_dict(orient="records")
+                    )
+                    # For now, we raise an error. In a real pipeline, you might
+                    # filter out the bad records and quarantine them.
+                    raise ValidationRuleError(f"Batch validation failed for {len(err.failure_cases)} records.")
+            else:
+                logger.warning(f"No Pandera validation schema found for '{schema_name}', skipping batch validation.")
+
+        return transformed_batch
     
     def get_supported_schemas(self) -> List[str]:
         """Get list of supported schema names."""

@@ -13,3 +13,4 @@ python-dotenv
 pandera
 pyyaml
 databento
+matplotlib

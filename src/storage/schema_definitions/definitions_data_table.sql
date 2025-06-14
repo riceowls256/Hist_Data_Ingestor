@@ -1,123 +1,3 @@
-# Database Schemas (TimescaleDB)
-
-The standardized data is persisted in TimescaleDB hypertables, optimized for time-series workloads. Each supported schema will have a dedicated table.
-
-daily_ohlcv_data Hypertable
-
-This table stores daily OHLCV data, as defined in the initial MVP scope.
-
-```sql
-CREATE TABLE IF NOT EXISTS daily_ohlcv_data (
-   ts_event TIMESTAMPTZ NOT NULL,
-   instrument_id INTEGER NOT NULL,
-   open_price NUMERIC NOT NULL,
-   high_price NUMERIC NOT NULL,
-   low_price NUMERIC NOT NULL,
-   close_price NUMERIC NOT NULL,
-   volume BIGINT NOT NULL,
-   trade_count INTEGER NULL,
-   vwap NUMERIC NULL,
-   granularity VARCHAR(10) NOT NULL,
-   data_source VARCHAR(50) NOT NULL,
-   PRIMARY KEY (instrument_id, ts_event, granularity)
-);
-SELECT create_hypertable('daily_ohlcv_data', by_range('ts_event', chunk_time_interval => INTERVAL '7 days'), if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_daily_ohlcv_instrument_time ON daily_ohlcv_data (instrument_id, ts_event DESC);
-```
-
-trades_data Hypertable
-
-This table stores individual trade events from the trades schema.
-
-```sql
-CREATE TABLE IF NOT EXISTS trades_data (
-   ts_event TIMESTAMPTZ NOT NULL,
-   ts_recv TIMESTAMPTZ NOT NULL,
-   publisher_id SMALLINT NOT NULL,
-   instrument_id INTEGER NOT NULL,
-   price NUMERIC NOT NULL,
-   size INTEGER NOT NULL,
-   action CHAR(1) NOT NULL,
-   side CHAR(1) NOT NULL,
-   flags SMALLINT NOT NULL,
-   depth SMALLINT NOT NULL,
-   sequence INTEGER NULL,
-   ts_in_delta INTEGER NULL,
-   PRIMARY KEY (instrument_id, ts_event, sequence, price, size, side)
-);
-SELECT create_hypertable('trades_data', by_range('ts_event', INTERVAL '1 day'), if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_trades_instrument_time ON trades_data (instrument_id, ts_event DESC);
-```
-
-tbbo_data Hypertable
-
-This table stores trade events along with the corresponding top-of-book quote from the tbbo schema.
-
-```sql
-CREATE TABLE IF NOT EXISTS tbbo_data (
-   ts_event TIMESTAMPTZ NOT NULL,
-   ts_recv TIMESTAMPTZ NOT NULL,
-   publisher_id SMALLINT NOT NULL,
-   instrument_id INTEGER NOT NULL,
-   price NUMERIC NOT NULL,
-   size INTEGER NOT NULL,
-   action CHAR(1) NOT NULL,
-   side CHAR(1) NOT NULL,
-   flags SMALLINT NOT NULL,
-   depth SMALLINT NOT NULL,
-   sequence INTEGER NULL,
-   ts_in_delta INTEGER NULL,
-   bid_px_00 NUMERIC NULL,
-   ask_px_00 NUMERIC NULL,
-   bid_sz_00 INTEGER NULL,
-   ask_sz_00 INTEGER NULL,
-   bid_ct_00 INTEGER NULL,
-   ask_ct_00 INTEGER NULL,
-   PRIMARY KEY (instrument_id, ts_event, sequence, price, size, side)
-);
-SELECT create_hypertable('tbbo_data', by_range('ts_event', INTERVAL '1 day'), if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_tbbo_instrument_time ON tbbo_data (instrument_id, ts_event DESC);
-```
-
-statistics_data Hypertable
-
-This table stores official summary statistics from the statistics schema.
-
-```sql
-CREATE TABLE IF NOT EXISTS statistics_data (
-   ts_event TIMESTAMPTZ NOT NULL,
-   ts_recv TIMESTAMPTZ NOT NULL,
-   ts_ref TIMESTAMPTZ NOT NULL,
-   publisher_id SMALLINT NOT NULL,
-   instrument_id INTEGER NOT NULL,
-   price NUMERIC NULL,
-   quantity INTEGER NULL,
-   sequence INTEGER NOT NULL,
-   ts_in_delta INTEGER NOT NULL,
-   stat_type SMALLINT NOT NULL,
-   channel_id SMALLINT NOT NULL,
-   update_action SMALLINT NOT NULL,
-   stat_flags SMALLINT NOT NULL,
-   PRIMARY KEY (instrument_id, ts_event, stat_type, sequence)
-);
-SELECT create_hypertable('statistics_data', by_range('ts_event', INTERVAL '7 days'), if_not_exists => TRUE);
-CREATE INDEX IF NOT EXISTS idx_statistics_instrument_time_type ON statistics_data (instrument_id, ts_event DESC, stat_type);
-```
-
-## definitions_data Hypertable
-
-**Status: ✅ IMPLEMENTED in Story 2.4**
-
-This table stores comprehensive instrument definition metadata from Databento's definition schema. Supports the complete 73-field DatabentoDefinitionRecord model with all header fields, core specifications, contract parameters, leg data for spreads, and optional metadata.
-
-**Key Features:**
-- **Complete Field Coverage:** All 73 fields from DatabentoDefinitionRecord model
-- **Multi-Asset Support:** Futures, options, spreads, and combination instruments
-- **TimescaleDB Optimization:** Hypertable with compression and retention policies
-- **Business Logic Constraints:** Price limits, lot sizes, and leg field validation
-- **Performance Indexes:** Optimized for asset, expiration, and instrument lookups
-
-```sql
 -- ================================================================================================
 -- Databento Instrument Definition Data - TimescaleDB Hypertable Schema
 -- ================================================================================================
@@ -125,8 +5,13 @@ This table stores comprehensive instrument definition metadata from Databento's 
 -- from Databento API. Supports the complete 73-field DatabentoDefinitionRecord model.
 --
 -- Story: 2.4 - Add Support for Databento Instrument Definition Schema
+-- AC3: Database Table Created - definitions_data hypertable in TimescaleDB
 -- ================================================================================================
 
+-- Drop table if exists (for development/testing)
+DROP TABLE IF EXISTS definitions_data CASCADE;
+
+-- Create the definitions_data table
 CREATE TABLE definitions_data (
     -- ========================================================================================
     -- HEADER FIELDS (Required)
@@ -246,7 +131,10 @@ CREATE TABLE definitions_data (
     -- ========================================================================================
     -- CONSTRAINTS
     -- ========================================================================================
+    -- Primary constraint: unique instrument per event time
     CONSTRAINT pk_definitions_data PRIMARY KEY (instrument_id, ts_event),
+    
+    -- Business logic constraints
     CONSTRAINT chk_price_limits CHECK (high_limit_price >= low_limit_price),
     CONSTRAINT chk_lot_sizes CHECK (min_lot_size_block >= min_lot_size),
     CONSTRAINT chk_leg_fields CHECK (
@@ -258,11 +146,13 @@ CREATE TABLE definitions_data (
 -- ================================================================================================
 -- CREATE HYPERTABLE
 -- ================================================================================================
+-- Convert to TimescaleDB hypertable partitioned by ts_event
 SELECT create_hypertable('definitions_data', 'ts_event');
 
 -- ================================================================================================
--- PERFORMANCE INDEXES
+-- INDEXES FOR PERFORMANCE
 -- ================================================================================================
+
 -- Primary lookup indexes
 CREATE INDEX idx_definitions_instrument_time ON definitions_data (instrument_id, ts_event DESC);
 CREATE INDEX idx_definitions_raw_symbol_time ON definitions_data (raw_symbol, ts_event DESC);
@@ -295,33 +185,42 @@ CREATE INDEX idx_definitions_currency ON definitions_data (currency);
 -- ================================================================================================
 -- PERFORMANCE OPTIMIZATION
 -- ================================================================================================
--- Enable compression (compress chunks older than 7 days)
+
+-- Enable compression on older chunks (data older than 7 days)
 ALTER TABLE definitions_data SET (
     timescaledb.compress,
     timescaledb.compress_segmentby = 'instrument_id, asset',
     timescaledb.compress_orderby = 'ts_event DESC'
 );
 
+-- Set compression policy (compress chunks older than 7 days)
 SELECT add_compression_policy('definitions_data', INTERVAL '7 days');
+
+-- Set retention policy (keep data for 2 years)
 SELECT add_retention_policy('definitions_data', INTERVAL '2 years');
-```
 
-**Usage Examples:**
-```sql
--- Get latest ES futures definitions
-SELECT * FROM definitions_data 
-WHERE asset = 'ES' AND instrument_class = 'FUT' 
-ORDER BY expiration LIMIT 10;
+-- ================================================================================================
+-- COMMENTS AND DOCUMENTATION
+-- ================================================================================================
 
--- Find all active spreads
-SELECT raw_symbol, leg_count, expiration 
-FROM definitions_data 
-WHERE leg_count > 0 AND expiration > NOW()
-ORDER BY asset, expiration;
+COMMENT ON TABLE definitions_data IS 
+'Databento instrument definition data stored as TimescaleDB hypertable. Contains point-in-time reference information about financial instruments including futures, options, and spreads.';
 
--- Contract specification analysis
-SELECT asset, currency, min_price_increment, contract_multiplier, unit_of_measure_qty
-FROM definitions_data 
-WHERE instrument_class = 'FUT' 
-GROUP BY asset, currency, min_price_increment, contract_multiplier, unit_of_measure_qty;
-```
+COMMENT ON COLUMN definitions_data.ts_event IS 'Matching-engine-received timestamp (partition key)';
+COMMENT ON COLUMN definitions_data.instrument_id IS 'Databento numeric instrument ID (primary key component)';
+COMMENT ON COLUMN definitions_data.raw_symbol IS 'Exchange-native symbol format';
+COMMENT ON COLUMN definitions_data.leg_count IS 'Number of legs (0 for outrights, >0 for spreads)';
+COMMENT ON COLUMN definitions_data.asset IS 'Underlying asset/product code (e.g., ES, CL, NG)';
+
+-- ================================================================================================
+-- VERIFICATION QUERIES
+-- ================================================================================================
+
+-- Verify table structure
+\d definitions_data
+
+-- Verify hypertable creation
+SELECT * FROM timescaledb_information.hypertables WHERE hypertable_name = 'definitions_data';
+
+-- Verify indexes
+SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'definitions_data' ORDER BY indexname; 
