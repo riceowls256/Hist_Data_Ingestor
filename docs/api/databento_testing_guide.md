@@ -74,6 +74,17 @@ CONTRACT_NAME = "E-mini S&P 500"  # Display name
 **Purpose:** CME Globex MDP 3.0 publisher compliance verification
 **Validates:** All 10 expected CME statistics types
 
+### 6. `test_definitions_schema.py`
+**Purpose:** Instrument definition and metadata validation
+**Key Features:**
+- Contract specifications (tick size, multipliers, limits)
+- Expiration dates and trading rules
+- Exchange and currency information
+
+### 7. `test_status_schema.py`
+**Purpose:** Market status and trading state validation  
+**Returns:** Trading hours, market halts, session states
+
 ## CME Statistics Coverage Verification
 
 ### Expected Statistics Types (All ✅ Confirmed)
@@ -102,6 +113,74 @@ CONTRACT_NAME = "E-mini S&P 500"  # Display name
 | trades | 1 day | 493,000+ | ~10 seconds |
 | tbbo | 1 day | 493,000+ | ~10 seconds |
 | statistics | 30 days | 6-12 | < 1 second |
+| definition | 2 months | 36.6M+ | ~3 minutes* |
+| status | 7 days | 33 | < 1 second |
+
+*Note: Definition schema requires special handling (see Critical Insights below)
+
+## Critical Schema Insights
+
+### ⚠️ Definition Schema Special Handling Required
+
+**Key Discovery:** The `definition` schema contains rich instrument metadata (36.6M+ records) but **symbol filtering does not work properly**.
+
+#### ❌ This Will Return 0 Records:
+```python
+# DON'T DO THIS - Symbol filtering fails
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3",
+    schema="definition", 
+    symbols=["ES.c.0"],  # ← This filter doesn't work!
+    start="2024-12-01",
+    end="2024-12-31"
+)
+```
+
+#### ✅ Correct Approach:
+```python
+# DO THIS - Query all records, then filter by instrument_id
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3", 
+    schema="definition",
+    # No symbols parameter!
+    start="2024-12-01",
+    end="2024-12-31"
+)
+
+# Filter manually by instrument_id
+es_definitions = []
+for record in data:
+    if record.instrument_id == 4916:  # ES instrument ID
+        es_definitions.append(record)
+```
+
+#### Definition Record Contents (ES Example):
+```
+✅ Found 53 ES definition records with:
+- Instrument ID: 4916
+- Raw Symbol: ESM5 (June 2025 contract)  
+- Exchange: XCME
+- Currency: USD
+- Min Price Increment: 0.25 (tick size)
+- Contract Multiplier: $50 per index point
+- Daily Limits: 5757.5 - 6602.0
+- Expiration: June 20, 2025
+- Market Depth: 10 levels
+```
+
+#### How to Find Instrument IDs:
+1. **Use Status Schema:** ES shows as instrument_id=4916
+2. **Use Symbology API:** Map symbols to instrument IDs
+3. **Cross-reference:** Match IDs across different schemas
+
+### Status Schema Insights
+
+**Purpose:** Market state and trading session information
+**Key Data:**
+- Trading state (is_trading: True/False)
+- Quoting state (is_quoting: True/False) 
+- Market open/close events
+- Trading halt notifications
 
 ## Common Issues and Solutions
 
@@ -131,6 +210,12 @@ pip install -r requirements.txt
 ```bash
 echo $DATABENTO_API_KEY  # Should return your key
 ```
+
+### 5. Definition Schema Returns 0 Records
+**Problem:** Symbol filtering appears to be broken for definition schema
+**Symptoms:** `symbols=["ES.c.0"]` parameter returns 0 records despite schema containing 36.6M+ records
+**Solution:** Query without symbols parameter, filter by instrument_id manually
+**Note:** This is a known limitation unique to the definition schema
 
 ## Data Validation Checklist
 

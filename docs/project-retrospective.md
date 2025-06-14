@@ -258,6 +258,86 @@ pip show databento  # Should show databento-0.57.0
 
 **Business Impact:** Successfully validated that our Databento integration meets all requirements for production historical data ingestion with full CME Globex compliance and robust error handling.
 
+### Definition Schema Critical Discovery (Post-Initial Testing)
+
+**Context:** Extended API testing revealed that the `definition` schema, essential for the `definitions_data` hypertable, contained significant data but appeared broken due to symbol filtering issues.
+
+**Initial Symptoms:**
+- All queries using `symbols=["ES.c.0"]` parameter returned 0 records from definition schema
+- This suggested the schema was empty or non-functional for ES futures
+- Threatened the viability of the definitions_data table design
+
+**Investigation Breakthrough:**
+Created comprehensive test suite (`tests/hist_api/test_definitions_*.py`) to investigate the issue systematically:
+
+**Key Finding:** Symbol filtering is broken for definition schema, but the schema contains rich data.
+
+**Correct vs. Incorrect Approaches:**
+```python
+# ❌ This approach returns 0 records (incorrectly)
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3",
+    schema="definition",
+    symbols=["ES.c.0"],  # Symbol filtering doesn't work!
+    start="2024-12-01",
+    end="2024-12-31"
+)
+
+# ✅ Correct approach: Query all, filter manually
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3", 
+    schema="definition",
+    # No symbols parameter
+    start="2024-12-01",
+    end="2024-12-31"
+)
+
+# Manual filtering by instrument_id
+es_definitions = []
+for record in data:
+    if record.instrument_id == 4916:  # ES instrument ID from status schema
+        es_definitions.append(record)
+```
+
+**Data Validation Results:**
+- **Total Records:** 36.6 million definition records scanned over 2-month period
+- **ES Definitions Found:** 53 comprehensive records with full contract specifications
+- **Data Quality:** Rich metadata including tick sizes, contract multipliers, trading limits, expiration dates
+
+**ES Definition Record Example:**
+- **Instrument ID:** 4916 (matches status and other schemas)
+- **Raw Symbol:** ESM5 (June 2025 contract)
+- **Exchange:** XCME, **Currency:** USD
+- **Min Price Increment:** 0.25 (tick size)
+- **Contract Multiplier:** $50 per index point
+- **Daily Trading Limits:** 5757.5 - 6602.0
+- **Expiration:** June 20, 2025
+- **Market Depth:** 10 levels
+
+**Critical Business Impact:**
+1. **Schema Viability Confirmed:** Definition schema works and provides essential contract metadata for proper trade processing
+2. **Implementation Pattern Established:** Must query all definition records then filter by instrument_id manually
+3. **Cross-Schema Integration:** Instrument IDs from status/trades schemas can be used to find corresponding definitions
+4. **Risk Management Data:** Daily trading limits and contract specifications available for compliance systems
+
+**Architecture Implications:**
+- The `definitions_data` hypertable design remains viable and necessary
+- Ingestion logic must handle 36M+ records efficiently and filter by instrument_id
+- Status schema provides the instrument_id mapping needed for definition lookups
+- Definition records provide critical contract specifications for risk management
+
+**Testing Framework Enhancement:**
+Added specialized test scripts for definition schema investigation:
+- `test_definitions_schema.py` - Standard UTC midnight snapshot testing
+- `test_definitions_broad.py` - Comprehensive schema availability testing  
+- `test_definitions_analysis.py` - Record structure and content analysis
+- `test_definitions_detailed.py` - Symbology mapping attempts
+- `test_definitions_fixed.py` - Final working implementation with manual filtering
+
+**Critical Lesson:** Never assume API behavior without comprehensive testing. The "obvious" symbol filtering approach failed, but investigation revealed the correct pattern and confirmed rich data availability. This discovery pattern (systematic investigation when initial approaches fail) should be applied to other complex API integrations.
+
+**Documentation Impact:** Updated testing guides and API references with specific warning about definition schema filtering limitations and correct implementation patterns for future developers.
+
 ---
 
 **Summary:**

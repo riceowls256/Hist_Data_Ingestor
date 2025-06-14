@@ -112,6 +112,10 @@ data = record.as_dict()  # AttributeError
 | trades | 1 day | 493,000+ | ~10 seconds | High-frequency analysis |
 | tbbo | 1 day | 493,000+ | ~10 seconds | Spread analysis |
 | statistics | 30 days | 6-12 | < 1 second | Settlement/OI data |
+| definition | 2 months | 36.6M+ | ~3 minutes* | Contract specs |
+| status | 7 days | 33 | < 1 second | Market state |
+
+**\*Critical Note:** Definition schema requires special handling - see Schema-Specific Issues below.
 
 ### CME Globex MDP 3.0 Statistics Coverage
 **Compliance Verification:** Successfully confirmed all 10 expected CME statistics types:
@@ -194,6 +198,54 @@ python tests/hist_api/test_api_connection.py
    - Issue: Import/package errors
    - Solution: Recreate virtual environment
    - Command: `pip install -r requirements.txt`
+
+### Schema-Specific Issues
+
+#### ⚠️ Definition Schema: Symbol Filtering Broken
+**Critical Finding:** The `definition` schema contains 36.6M+ rich instrument metadata records, but symbol filtering does not work.
+
+**Problem:**
+```python
+# This returns 0 records (incorrectly)
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3",
+    schema="definition",
+    symbols=["ES.c.0"],  # ← Filtering fails!
+    start="2024-12-01",
+    end="2024-12-31"
+)
+```
+
+**Solution:**
+```python
+# Query all records, filter by instrument_id manually
+data = client.timeseries.get_range(
+    dataset="GLBX.MDP3",
+    schema="definition",
+    # No symbols parameter
+    start="2024-12-01", 
+    end="2024-12-31"
+)
+
+# Filter manually
+for record in data:
+    if record.instrument_id == 4916:  # ES instrument ID
+        # Process ES definition record
+        pass
+```
+
+**Definition Record Example (ES):**
+- Instrument ID: 4916
+- Symbol: ESM5 (June 2025 contract)
+- Exchange: XCME, Currency: USD
+- Tick Size: 0.25, Multiplier: $50
+- Daily Limits: 5757.5 - 6602.0
+- Expiration: June 20, 2025
+
+**Getting Instrument IDs:**
+1. Use `status` schema to find IDs for symbols
+2. Use Databento symbology API
+3. Cross-reference between schemas
 
 ### Integration Testing Framework
 **Available Test Scripts:**

@@ -8,6 +8,7 @@ Test Scripts:
 - test_api_connection.py: Basic connectivity and authentication validation
 - test_futures_api.py: Comprehensive futures contract testing across schemas
 - test_statistics_schema.py: Statistics schema exploration and validation
+- test_definitions_schema.py: Definitions schema testing for instrument metadata
 - analyze_stats_fields.py: Comprehensive statistics field analysis
 - test_cme_statistics.py: CME Globex MDP 3.0 compliance verification
 - debug_databento_record.py: Record structure debugging utilities
