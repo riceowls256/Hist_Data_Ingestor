@@ -23,6 +23,8 @@ from src.utils.custom_logger import get_logger
 
 from src.ingestion.api_adapters.base_adapter import BaseAdapter
 from src.storage.models import DATABENTO_SCHEMA_MODEL_MAPPING
+from src.transformation.validators.databento_validators import validate_dataframe
+from src.utils.file_io import QuarantineManager
 
 logger = get_logger(__name__)
 
@@ -44,6 +46,11 @@ class DatabentoAdapter(BaseAdapter):
         """
         super().__init__(config)
         self.client = None
+        self.validation_config = self.config.get("validation", {})
+        self.strict_mode = self.validation_config.get("strict_mode", True)
+        self.quarantine_manager = QuarantineManager(
+            enabled=self.validation_config.get("quarantine_enabled", True)
+        )
         
         # Extract retry policy from config
         retry_config = self.config.get("retry_policy", {})
@@ -63,12 +70,12 @@ class DatabentoAdapter(BaseAdapter):
         key_env_var = api_config.get("key_env_var")
         
         if not key_env_var:
-            self.log.error("Missing key_env_var in api configuration")
+            logger.error("Missing key_env_var in api configuration")
             return False
             
         api_key = os.getenv(key_env_var)
         if not api_key:
-            self.log.error("API key not found in environment", env_var=key_env_var)
+            logger.error("API key not found in environment", env_var=key_env_var)
             return False
             
         return True
@@ -120,7 +127,7 @@ class DatabentoAdapter(BaseAdapter):
         self,
         dataset: str,
         schema: str,
-        symbols: List[str],
+        symbols: Any,  # Can be List[str] or str for parent symbology
         stype_in: str,
         start_date: str,
         end_date: str
@@ -205,7 +212,7 @@ class DatabentoAdapter(BaseAdapter):
         current_start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
         final_end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         
-        while current_start < final_end:
+        while current_start <= final_end:
             current_end = min(
                 current_start + timedelta(days=chunk_interval_days),
                 final_end
@@ -216,144 +223,77 @@ class DatabentoAdapter(BaseAdapter):
             ))
             current_start = current_end
             
+            # Prevent infinite loop when start equals end
+            if current_start == final_end:
+                break
+            
         logger.info(f"Generated {len(chunks)} date chunks", chunks=len(chunks))
         return chunks
 
     def fetch_historical_data(self, job_config: Dict[str, Any]) -> Iterator[BaseModel]:
         """
-        Fetch historical data based on job configuration.
+        Fetches historical data from the Databento API based on the job configuration.
+        
+        This method handles date chunking, data fetching, Pydantic validation,
+        and quarantining of invalid records.
         
         Args:
-            job_config: Job configuration containing dataset, schema, symbols, date range, etc.
+            job_config: Configuration for the specific data ingestion job
             
         Yields:
-            BaseModel: Validated Pydantic model instances containing the fetched data
-            
-        Raises:
-            ValueError: If job configuration is invalid
-            ConnectionError: If API connection fails
-            RuntimeError: If data fetching fails
+            Iterator of validated Pydantic model instances
         """
-        if not self.client:
-            raise ConnectionError("Client not connected. Call connect() first.")
-            
-        # Extract job parameters
-        dataset = job_config.get("dataset")
-        schema = job_config.get("schema")
-        symbols = job_config.get("symbols", [])
-        stype_in = job_config.get("stype_in", "continuous")
-        start_date = job_config.get("start_date")
-        end_date = job_config.get("end_date")
+        dataset = job_config["dataset"]
+        schema = job_config["schema"]
+        symbols = job_config["symbols"]
+        stype_in = job_config["stype_in"]
+        start_date = job_config["start_date"]
+        end_date = job_config["end_date"]
         chunk_interval_days = job_config.get("date_chunk_interval_days")
         
-        # Validate required parameters
-        if not all([dataset, schema, symbols, start_date, end_date]):
-            raise ValueError("Missing required job configuration parameters")
+        date_chunks = self._generate_date_chunks(start_date, end_date, chunk_interval_days)
+        
+        model_cls = DATABENTO_SCHEMA_MODEL_MAPPING.get(schema)
+        if not model_cls:
+            logger.error(f"No Pydantic model found for schema: {schema}")
+            return
+
+        validation_stats = {"total_records": 0, "failed_validation": 0}
+
+        for start, end in date_chunks:
+            data_chunk = self._fetch_data_chunk(dataset, schema, symbols, stype_in, start, end)
             
-        # Get the appropriate Pydantic model for this schema
-        pydantic_model = DATABENTO_SCHEMA_MODEL_MAPPING.get(schema)
-        if not pydantic_model:
-            raise ValueError(f"Unsupported schema: {schema}")
-            
+            for record in data_chunk:
+                validation_stats["total_records"] += 1
+                try:
+                    # Stage 1 Validation: Pydantic model instantiation
+                    model_instance = model_cls.model_validate(
+                        record.as_dict(),
+                        strict=self.strict_mode
+                    )
+                    yield model_instance
+                except ValidationError as e:
+                    validation_stats["failed_validation"] += 1
+                    logger.warning(
+                        "Pydantic validation failed for record",
+                        schema=schema,
+                        error=str(e),
+                        record_data=record.as_dict()
+                    )
+                    self.quarantine_manager.quarantine_record(
+                        schema,
+                        "pydantic_validation",
+                        str(e),
+                        original_record=record.as_dict()
+                    )
+        
         logger.info(
-            "Starting data fetch job",
-            dataset=dataset,
+            "Data fetching and validation complete",
             schema=schema,
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            chunk_interval_days=chunk_interval_days
-        )
-        
-        # Generate date chunks
-        date_chunks = self._generate_date_chunks(
-            start_date, end_date, chunk_interval_days
-        )
-        
-        total_records = 0
-        validation_errors = 0
-        
-        # Process each date chunk
-        for chunk_start, chunk_end in date_chunks:
-            try:
-                # Fetch data for this chunk
-                data_store = self._fetch_data_chunk(
-                    dataset=dataset,
-                    schema=schema,
-                    symbols=symbols,
-                    stype_in=stype_in,
-                    start_date=chunk_start,
-                    end_date=chunk_end
-                )
-                
-                # Process each record in the data store
-                chunk_records = 0
-                for record in data_store:
-                    try:
-                        # Convert databento record to dictionary
-                        # Use direct attribute access for databento records
-                        record_dict = {}
-                        for attr in dir(record):
-                            if not attr.startswith('_') and not callable(getattr(record, attr)):
-                                # Skip helper/metadata fields, focus on actual data
-                                if attr not in ['hd', 'publisher_id', 'rtype', 'size_hint', 'record_size']:
-                                    record_dict[attr] = getattr(record, attr)
-                        
-                        # Validate with Pydantic model
-                        validated_record = pydantic_model.model_validate(record_dict)
-                        yield validated_record
-                        
-                        chunk_records += 1
-                        total_records += 1
-                        
-                    except ValidationError as e:
-                        validation_errors += 1
-                        logger.warning(
-                            "Pydantic validation failed for record",
-                            schema=schema,
-                            error=str(e),
-                            record_sample=str(record)[:200]
-                        )
-                        # Continue processing other records
-                        continue
-                    except Exception as e:
-                        logger.error(
-                            "Failed to process record",
-                            error=str(e),
-                            record_type=type(record).__name__
-                        )
-                        continue
-                        
-                logger.info(
-                    "Completed chunk processing",
-                    chunk_start=chunk_start,
-                    chunk_end=chunk_end,
-                    records_processed=chunk_records
-                )
-                
-            except Exception as e:
-                logger.error(
-                    "Failed to process date chunk",
-                    chunk_start=chunk_start,
-                    chunk_end=chunk_end,
-                    error=str(e)
-                )
-                # Continue with next chunk rather than failing entire job
-                continue
-                
-        logger.info(
-            "Data fetch job completed",
-            total_records=total_records,
-            validation_errors=validation_errors,
-            job_name=job_config.get("name", "unknown")
+            stats=validation_stats
         )
 
     def disconnect(self) -> None:
-        """
-        Close connection to the API.
-        
-        For Databento, this is a no-op as the client is stateless.
-        """
-        if self.client:
-            self.client = None
-            logger.info("Databento client disconnected")
+        """Disconnects the client. For Databento, this is a no-op."""
+        self.client = None
+        logger.info("Databento client disconnected.")

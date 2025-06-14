@@ -10,7 +10,8 @@ last_updated: "2024-06-13"
 schema_mappings:
   
   # OHLCV Data Mapping
-  ohlcv:
+  ohlcv-1d:
+    schema_name: "ohlcv-1d"
     source_model: "DatabentoOHLCVRecord"
     target_schema: "daily_ohlcv_data"
     description: "Maps OHLCV bars to standardized daily OHLCV format"
@@ -56,6 +57,7 @@ schema_mappings:
   
   # Trade Data Mapping  
   trades:
+    schema_name: "trades"
     source_model: "DatabentoTradeRecord"
     target_schema: "trades_data"
     description: "Maps individual trade records to standardized trade format"
@@ -107,6 +109,7 @@ schema_mappings:
 
   # TBBO (Top of Book) Data Mapping
   tbbo:
+    schema_name: "tbbo"
     source_model: "DatabentoTBBORecord"  
     target_schema: "tbbo_data"
     description: "Maps TBBO records to standardized top-of-book format"
@@ -195,6 +198,164 @@ schema_mappings:
       channel_id: 0
       update_action: 1
       ts_in_delta: 0
+
+  # Definition Schema Data Mapping
+  definition:
+    schema_name: "definition"
+    source_model: "DatabentoDefinitionRecord"
+    target_schema: "instrument_definitions"
+    description: "Maps instrument definition records to standardized instrument metadata format"
+    
+    field_mappings:
+      # Header fields - direct mappings
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      rtype: "record_type"
+      publisher_id: "publisher_id"
+      instrument_id: "instrument_id"
+      
+      # Core definition fields
+      raw_symbol: "symbol"
+      security_update_action: "update_action"
+      instrument_class: "instrument_class"
+      min_price_increment: "tick_size"
+      display_factor: "display_factor"
+      expiration: "expiration_date"
+      activation: "activation_date"
+      high_limit_price: "high_limit_price"
+      low_limit_price: "low_limit_price"
+      max_price_variation: "max_price_variation"
+      unit_of_measure_qty: "contract_size"
+      min_price_increment_amount: "min_price_increment_amount"
+      price_ratio: "price_ratio"
+      inst_attrib_value: "instrument_attributes"
+      
+      # Optional identifiers
+      underlying_id: "underlying_instrument_id"
+      raw_instrument_id: "raw_instrument_id"
+      
+      # Market parameters
+      market_depth_implied: "market_depth_implied"
+      market_depth: "market_depth"
+      market_segment_id: "market_segment_id"
+      max_trade_vol: "max_trade_volume"
+      min_lot_size: "min_lot_size"
+      min_lot_size_block: "min_block_size"
+      min_lot_size_round_lot: "min_round_lot_size"
+      min_trade_vol: "min_trade_volume"
+      
+      # Contract details
+      contract_multiplier: "contract_multiplier"
+      decay_quantity: "decay_quantity"
+      original_contract_size: "original_contract_size"
+      appl_id: "application_id"
+      maturity_year: "maturity_year"
+      decay_start_date: "decay_start_date"
+      channel_id: "channel_id"
+      
+      # Currency and classification
+      currency: "currency"
+      settl_currency: "settlement_currency"
+      secsubtype: "security_subtype"
+      group: "security_group"
+      exchange: "exchange"
+      asset: "underlying_asset"
+      cfi: "cfi_code"
+      security_type: "security_type"
+      unit_of_measure: "unit_of_measure"
+      underlying: "underlying_symbol"
+      
+      # Option-specific fields
+      strike_price_currency: "strike_currency"
+      strike_price: "strike_price"
+      
+      # Trading algorithm and display
+      match_algorithm: "matching_algorithm"
+      main_fraction: "main_fraction"
+      price_display_format: "price_display_format"
+      sub_fraction: "sub_fraction"
+      underlying_product: "underlying_product_code"
+      
+      # Maturity details
+      maturity_month: "maturity_month"
+      maturity_day: "maturity_day"
+      maturity_week: "maturity_week"
+      
+      # Miscellaneous attributes
+      user_defined_instrument: "is_user_defined"
+      contract_multiplier_unit: "contract_multiplier_unit"
+      flow_schedule_type: "flow_schedule_type"
+      tick_rule: "tick_rule"
+      
+      # Leg fields for spreads/strategies
+      leg_count: "leg_count"
+      leg_index: "leg_index"
+      leg_instrument_id: "leg_instrument_id"
+      leg_raw_symbol: "leg_symbol"
+      leg_instrument_class: "leg_instrument_class"
+      leg_side: "leg_side"
+      leg_price: "leg_price"
+      leg_delta: "leg_delta"
+      leg_ratio_price_numerator: "leg_price_ratio_num"
+      leg_ratio_price_denominator: "leg_price_ratio_den"
+      leg_ratio_qty_numerator: "leg_qty_ratio_num"
+      leg_ratio_qty_denominator: "leg_qty_ratio_den"
+      leg_underlying_id: "leg_underlying_id"
+      
+    # Data transformations for definition records
+    transformations:
+      # Ensure activation comes before expiration
+      date_sequence_validation:
+        rule: "activation_date <= expiration_date"
+        
+      # Ensure price limits are logical
+      price_limit_validation:
+        rule: "high_limit_price >= low_limit_price"
+        
+      # Ensure tick size is positive
+      tick_size_validation:
+        fields: ["tick_size"]
+        rule: "value > 0"
+        
+      # Ensure contract size is positive
+      contract_size_validation:
+        fields: ["contract_size"]
+        rule: "value > 0"
+        
+      # Normalize update action values
+      update_action_normalization:
+        field: "update_action"
+        mappings:
+          "A": "ADDED"
+          "M": "MODIFIED" 
+          "D": "DELETED"
+          
+      # Normalize instrument class values
+      instrument_class_normalization:
+        field: "instrument_class"
+        mappings:
+          "FUT": "FUTURE"
+          "OPT": "OPTION"
+          "SPREAD": "SPREAD"
+          "COMBO": "COMBINATION"
+          "EQUITY": "EQUITY"
+          "INDEX": "INDEX"
+          "CURRENCY": "CURRENCY"
+          
+      # Validate leg count consistency
+      leg_count_validation:
+        rule: "leg_count == 0 OR (leg_index IS NOT NULL AND leg_instrument_id IS NOT NULL)"
+        
+      # Ensure option instruments have strike prices
+      option_strike_validation:
+        rule: "instrument_class != 'OPTION' OR strike_price IS NOT NULL"
+        
+    # Default values for definition records
+    defaults:
+      data_source: "databento"
+      record_status: "ACTIVE"
+      created_timestamp: "CURRENT_TIMESTAMP"
+      last_updated: "CURRENT_TIMESTAMP"
 
 # Configuration for conditional field mappings based on stat_type
 conditional_mappings:
