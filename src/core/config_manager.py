@@ -1,54 +1,58 @@
 import yaml
 from pathlib import Path
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, ConfigDict
 from pydantic_settings import BaseSettings
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / 'configs' / 'system_config.yaml'
 
 class DBConfig(BaseSettings):
+    model_config = ConfigDict(
+        env_prefix='TIMESCALEDB_',
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
+    
     user: str
     password: str
     host: str
     port: int
     dbname: str
 
-    class Config:
-        env_prefix = 'TIMESCALEDB_'
-        env_file = '.env'
-        env_file_encoding = 'utf-8'
-        extra = 'ignore'
-
     def get_uri(self):
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
 
 class APIConfig(BaseSettings):
+    model_config = ConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
+    
     ib_api_key: str
     databento_api_key: str
 
-    class Config:
-        env_file = '.env'
-        env_file_encoding = 'utf-8'
-        extra = 'ignore'
-
 class LoggingConfig(BaseSettings):
+    model_config = ConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
+    
     level: str = 'INFO'
     file: str = 'logs/app.log'
 
-    class Config:
-        env_file = '.env'
-        env_file_encoding = 'utf-8'
-        extra = 'ignore'
-
 class SystemConfig(BaseSettings):
+    model_config = ConfigDict(
+        env_nested_delimiter='__',
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore'
+    )
+    
     db: DBConfig
     logging: LoggingConfig
     api: APIConfig
-
-    class Config:
-        env_nested_delimiter = '__'
-        env_file = '.env'
-        env_file_encoding = 'utf-8'
-        extra = 'ignore'
 
 class ConfigManager:
     """

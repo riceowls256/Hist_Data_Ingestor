@@ -110,7 +110,7 @@ class BaseDatabentoSchema(pa.DataFrameModel):
     instrument_id: Series[int] = pa.Field(gt=0, coerce=True)
     ts_event: Series[datetime] = pa.Field(nullable=False)
 
-    class Config:
+    class Config:  # Pandera still uses class Config, not Pydantic ConfigDict
         strict = True
         coerce = True
 

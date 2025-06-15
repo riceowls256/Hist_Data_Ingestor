@@ -81,13 +81,3 @@ AC5: Idempotency Verified (Databento): Second run with same test data does not c
 AC6: Quarantine Handling Verified (Databento - if applicable): Sample Databento data designed to fail validation is correctly quarantined; only valid data in main table.
 AC7: Logs Confirm Successful Flow (Databento): Logs confirm successful completion of each stage for Databento test data, or errors/quarantining.
 
-**Story 2.6: Test End-to-End Databento Data Ingestion and Storage**
-**Story Statement**: As a Developer, I want to perform end-to-end tests for the Databento data pipeline, fetching a small sample of historical data for various schemas (using the databento-python client via the adapter), processing it through transformation and validation, and verifying its correct and idempotent storage in TimescaleDB, so that the complete data flow for Databento is confirmed to be working as expected using the established framework.
-**Acceptance Criteria (ACs)**:
-AC1: Test Data Scope Defined (Databento): Small, specific test dataset defined for Databento (e.g., 1-2 symbols, specific dataset/schemas like ohlcv.1m, trades, tbbo, 1-2 days data), documented.
-AC2: TimescaleLoader Reusability Confirmed: Existing TimescaleLoader processes standardized data from Databento pipeline without Databento-specific core logic changes for all schemas.
-AC3: End-to-End Pipeline Run for Databento Test Data: PipelineOrchestrator executes Databento pipeline for test data via CLI without unhandled errors.
-AC4: Data Correctly Stored in TimescaleDB (Databento): Ingested, transformed, validated Databento test data for various schemas is present and correct in TimescaleDB, verified by direct query.
-AC5: Idempotency Verified (Databento): Second run with same test data does not create duplicates or incorrectly change valid records.
-AC6: Quarantine Handling Verified (Databento - if applicable): Sample Databento data designed to fail validation is correctly quarantined; only valid data in main table.
-AC7: Logs Confirm Successful Flow (Databento): Logs confirm successful completion of each stage for Databento test data, or errors/quarantining.

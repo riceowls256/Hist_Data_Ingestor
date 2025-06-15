@@ -1,0 +1,705 @@
+"""
+Pipeline Orchestrator for Historical Data Ingestion.
+
+This module provides the central orchestration logic for coordinating data ingestion
+pipelines across different API sources. It manages component initialization, 
+execution sequencing, error handling, and progress tracking.
+"""
+
+import os
+import yaml
+from datetime import datetime, UTC
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Type, Union
+
+import structlog
+from pydantic import BaseModel, ValidationError
+from tenacity import RetryError
+
+from src.core.config_manager import ConfigManager
+from src.ingestion.api_adapters.base_adapter import BaseAdapter
+from src.ingestion.api_adapters.databento_adapter import DatabentoAdapter
+from src.transformation.rule_engine import RuleEngine, TransformationError
+from src.storage.timescale_loader import TimescaleDefinitionLoader
+from src.utils.custom_logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class PipelineError(Exception):
+    """Base exception for pipeline-related errors."""
+    pass
+
+
+class UnsupportedAPIError(PipelineError):
+    """Raised when an unsupported API type is requested."""
+    pass
+
+
+class ComponentInitializationError(PipelineError):
+    """Raised when a pipeline component fails to initialize."""
+    pass
+
+
+class PipelineExecutionError(PipelineError):
+    """Raised when pipeline execution encounters an unrecoverable error."""
+    pass
+
+
+class ComponentFactory:
+    """Factory for creating pipeline components based on API type."""
+    
+    # Registry of available API adapters
+    _adapters: Dict[str, Type[BaseAdapter]] = {
+        "databento": DatabentoAdapter,
+    }
+    
+    @classmethod
+    def register_adapter(cls, api_type: str, adapter_class: Type[BaseAdapter]) -> None:
+        """Register a new API adapter.
+        
+        Args:
+            api_type: String identifier for the API type
+            adapter_class: BaseAdapter subclass for this API
+        """
+        cls._adapters[api_type] = adapter_class
+        logger.info("Registered new API adapter", api_type=api_type, adapter_class=adapter_class.__name__)
+    
+    @classmethod
+    def create_adapter(cls, api_type: str, config: Dict[str, Any]) -> BaseAdapter:
+        """Create an API adapter instance.
+        
+        Args:
+            api_type: Type of API adapter to create
+            config: Configuration for the adapter
+            
+        Returns:
+            Initialized adapter instance
+            
+        Raises:
+            UnsupportedAPIError: If API type is not supported
+            ComponentInitializationError: If adapter initialization fails
+        """
+        if api_type not in cls._adapters:
+            available_apis = list(cls._adapters.keys())
+            raise UnsupportedAPIError(
+                f"Unsupported API type: {api_type}. Available: {available_apis}"
+            )
+        
+        adapter_class = cls._adapters[api_type]
+        try:
+            adapter = adapter_class(config)
+            logger.info("Created API adapter", api_type=api_type, adapter_class=adapter_class.__name__)
+            return adapter
+        except Exception as e:
+            logger.error("Failed to create API adapter", api_type=api_type, error=str(e))
+            raise ComponentInitializationError(f"Failed to initialize {api_type} adapter: {e}") from e
+
+
+class PipelineStats:
+    """Statistics tracking for pipeline execution."""
+    
+    def __init__(self):
+        self.start_time: Optional[datetime] = None
+        self.end_time: Optional[datetime] = None
+        self.records_fetched: int = 0
+        self.records_transformed: int = 0
+        self.records_validated: int = 0
+        self.records_stored: int = 0
+        self.records_quarantined: int = 0
+        self.chunks_processed: int = 0
+        self.errors_encountered: int = 0
+    
+    def start(self) -> None:
+        """Mark the start of pipeline execution."""
+        self.start_time = datetime.now(UTC)
+        logger.info("Pipeline statistics tracking started", start_time=self.start_time.isoformat())
+    
+    def finish(self) -> None:
+        """Mark the end of pipeline execution."""
+        self.end_time = datetime.now(UTC)
+        duration = (self.end_time - self.start_time).total_seconds() if self.start_time else 0
+        
+        logger.info(
+            "Pipeline execution completed",
+            end_time=self.end_time.isoformat(),
+            duration_seconds=duration,
+            records_fetched=self.records_fetched,
+            records_transformed=self.records_transformed,
+            records_validated=self.records_validated,
+            records_stored=self.records_stored,
+            records_quarantined=self.records_quarantined,
+            chunks_processed=self.chunks_processed,
+            errors_encountered=self.errors_encountered
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert stats to dictionary for logging/reporting."""
+        duration = None
+        if self.start_time and self.end_time:
+            duration = (self.end_time - self.start_time).total_seconds()
+        
+        return {
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "duration_seconds": duration,
+            "records_fetched": self.records_fetched,
+            "records_transformed": self.records_transformed,
+            "records_validated": self.records_validated,
+            "records_stored": self.records_stored,
+            "records_quarantined": self.records_quarantined,
+            "chunks_processed": self.chunks_processed,
+            "errors_encountered": self.errors_encountered
+        }
+
+
+class PipelineOrchestrator:
+    """
+    Central orchestrator for data ingestion pipelines.
+    
+    Coordinates the execution of data ingestion workflows by:
+    1. Loading and validating configurations
+    2. Initializing appropriate components based on API type
+    3. Executing the ETL pipeline sequence
+    4. Managing error handling and retry logic
+    5. Tracking progress and performance metrics
+    """
+    
+    def __init__(self, config_manager: Optional[ConfigManager] = None):
+        """
+        Initialize the pipeline orchestrator.
+        
+        Args:
+            config_manager: Optional ConfigManager instance. If None, creates a new one.
+        """
+        self.config_manager = config_manager or ConfigManager()
+        self.system_config = self.config_manager.get()
+        self.stats = PipelineStats()
+        
+        # Component instances (initialized per pipeline run)
+        self.adapter: Optional[BaseAdapter] = None
+        self.rule_engine: Optional[RuleEngine] = None
+        self.storage_loader: Optional[TimescaleDefinitionLoader] = None
+        
+        logger.info("PipelineOrchestrator initialized")
+    
+    def load_api_config(self, api_type: str) -> Dict[str, Any]:
+        """
+        Load API-specific configuration file.
+        
+        Args:
+            api_type: Type of API (e.g., 'databento')
+            
+        Returns:
+            Parsed configuration dictionary
+            
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValidationError: If config format is invalid
+        """
+        config_path = Path(__file__).parent.parent.parent / "configs" / "api_specific" / f"{api_type}_config.yaml"
+        
+        if not config_path.exists():
+            raise FileNotFoundError(f"API config file not found: {config_path}")
+        
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            logger.info("Loaded API configuration", api_type=api_type, config_path=str(config_path))
+            return config
+        except yaml.YAMLError as e:
+            logger.error("Failed to parse API configuration", api_type=api_type, error=str(e))
+            raise ValidationError(f"Invalid YAML in {config_path}: {e}") from e
+    
+    def validate_job_config(self, job_config: Dict[str, Any], api_type: str) -> bool:
+        """
+        Validate job configuration for the specified API type.
+        
+        Args:
+            job_config: Job configuration dictionary
+            api_type: Type of API
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        required_fields = {
+            "databento": ["name", "dataset", "schema", "symbols", "start_date", "end_date", "stype_in"]
+        }
+        
+        if api_type not in required_fields:
+            logger.error("Unknown API type for validation", api_type=api_type)
+            return False
+        
+        missing_fields = []
+        for field in required_fields[api_type]:
+            if field not in job_config:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            logger.error(
+                "Job configuration missing required fields",
+                api_type=api_type,
+                missing_fields=missing_fields,
+                job_config=job_config
+            )
+            return False
+        
+        logger.debug("Job configuration validated successfully", api_type=api_type, job_name=job_config.get("name"))
+        return True
+    
+    def initialize_components(self, api_type: str, api_config: Dict[str, Any]) -> None:
+        """
+        Initialize pipeline components for the specified API type.
+        
+        Args:
+            api_type: Type of API (e.g., 'databento')
+            api_config: API-specific configuration
+            
+        Raises:
+            ComponentInitializationError: If any component fails to initialize
+        """
+        try:
+            # Initialize API adapter
+            logger.info("Initializing API adapter", api_type=api_type)
+            self.adapter = ComponentFactory.create_adapter(api_type, api_config)
+            
+            # Validate adapter configuration
+            if not self.adapter.validate_config():
+                raise ComponentInitializationError(f"Invalid configuration for {api_type} adapter")
+            
+            # Connect to API
+            self.adapter.connect()
+            
+            # Initialize transformation engine
+            transformation_config = api_config.get("transformation", {})
+            mapping_config_path = transformation_config.get("mapping_config_path")
+            
+            if mapping_config_path:
+                logger.info("Initializing RuleEngine", mapping_config_path=mapping_config_path)
+                self.rule_engine = RuleEngine(mapping_config_path)
+            else:
+                logger.warning("No mapping configuration specified, transformation will be skipped")
+                self.rule_engine = None
+            
+            # Initialize storage loader
+            logger.info("Initializing TimescaleDefinitionLoader")
+            db_config = self.system_config.db
+            connection_params = {
+                'host': db_config.host,
+                'port': db_config.port,
+                'database': db_config.dbname,
+                'user': db_config.user,
+                'password': db_config.password
+            }
+            self.storage_loader = TimescaleDefinitionLoader(connection_params)
+            
+            logger.info("All pipeline components initialized successfully", api_type=api_type)
+            
+        except Exception as e:
+            logger.error("Failed to initialize pipeline components", api_type=api_type, error=str(e))
+            raise ComponentInitializationError(f"Component initialization failed: {e}") from e
+    
+    def cleanup_components(self) -> None:
+        """Clean up and disconnect pipeline components."""
+        if self.adapter:
+            try:
+                self.adapter.disconnect()
+                logger.debug("API adapter disconnected")
+            except Exception as e:
+                logger.warning("Failed to disconnect adapter", error=str(e))
+        
+        if self.storage_loader:
+            try:
+                # TimescaleDefinitionLoader uses context managers, no explicit close needed
+                logger.debug("Storage loader cleanup completed")
+            except Exception as e:
+                logger.warning("Failed to cleanup storage loader", error=str(e))
+        
+        # Reset component references
+        self.adapter = None
+        self.rule_engine = None
+        self.storage_loader = None
+        
+        logger.info("Pipeline components cleaned up")
+
+    def execute_databento_pipeline(self, job_config: Dict[str, Any]) -> bool:
+        """
+        Execute the complete Databento data ingestion pipeline.
+        
+        This method orchestrates the following sequence:
+        1. Fetch data from Databento API (with Pydantic validation)
+        2. Transform data using RuleEngine 
+        3. Validate transformed data
+        4. Store data in TimescaleDB
+        5. Track progress and handle errors
+        
+        Args:
+            job_config: Job configuration dictionary
+            
+        Returns:
+            True if pipeline completed successfully, False otherwise
+        """
+        job_name = job_config.get("name", "unnamed_job")
+        
+        try:
+            self.stats.start()
+            logger.info("Starting Databento pipeline execution", job_name=job_name, job_config=job_config)
+            
+            # Validate job configuration
+            if not self.validate_job_config(job_config, "databento"):
+                raise PipelineExecutionError("Invalid job configuration")
+            
+            # Check component initialization
+            if not all([self.adapter, self.storage_loader]):
+                raise PipelineExecutionError("Pipeline components not properly initialized")
+            
+            # Execute pipeline stages
+            success = self._execute_pipeline_stages(job_config)
+            
+            if success:
+                logger.info("Databento pipeline completed successfully", job_name=job_name)
+                return True
+            else:
+                logger.error("Databento pipeline failed", job_name=job_name)
+                return False
+                
+        except Exception as e:
+            self.stats.errors_encountered += 1
+            logger.error(
+                "Databento pipeline execution failed",
+                job_name=job_name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return False
+        finally:
+            self.stats.finish()
+    
+    def _execute_pipeline_stages(self, job_config: Dict[str, Any]) -> bool:
+        """
+        Execute the core pipeline stages for data processing.
+        
+        Args:
+            job_config: Job configuration dictionary
+            
+        Returns:
+            True if all stages completed successfully
+        """
+        job_name = job_config.get("name", "unnamed_job")
+        
+        try:
+            # Stage 1: Data Extraction
+            logger.info("Pipeline Stage 1: Data Extraction", job_name=job_name)
+            data_chunks = self._stage_data_extraction(job_config)
+            
+            for chunk_idx, raw_data_chunk in enumerate(data_chunks):
+                logger.info(
+                    "Processing data chunk",
+                    job_name=job_name,
+                    chunk_index=chunk_idx,
+                    chunk_size=len(raw_data_chunk) if hasattr(raw_data_chunk, '__len__') else "unknown"
+                )
+                
+                # Stage 2: Data Transformation
+                logger.debug("Pipeline Stage 2: Data Transformation", job_name=job_name, chunk_index=chunk_idx)
+                transformed_data = self._stage_data_transformation(raw_data_chunk, job_name, chunk_idx)
+                
+                # Stage 3: Data Validation (Post-transformation)
+                logger.debug("Pipeline Stage 3: Data Validation", job_name=job_name, chunk_index=chunk_idx)
+                validated_data, quarantined_data = self._stage_data_validation(transformed_data, job_name, chunk_idx)
+                
+                # Stage 4: Data Storage
+                logger.debug("Pipeline Stage 4: Data Storage", job_name=job_name, chunk_index=chunk_idx)
+                storage_success = self._stage_data_storage(validated_data, job_name, chunk_idx)
+                
+                if not storage_success:
+                    logger.error("Storage stage failed", job_name=job_name, chunk_index=chunk_idx)
+                    return False
+                
+                # Update statistics
+                self.stats.chunks_processed += 1
+                self.stats.records_quarantined += len(quarantined_data) if quarantined_data else 0
+                
+                logger.info(
+                    "Chunk processing completed",
+                    job_name=job_name,
+                    chunk_index=chunk_idx,
+                    records_stored=len(validated_data) if validated_data else 0,
+                    records_quarantined=len(quarantined_data) if quarantined_data else 0
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(
+                "Pipeline stage execution failed",
+                job_name=job_name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            self.stats.errors_encountered += 1
+            return False
+    
+    def _stage_data_extraction(self, job_config: Dict[str, Any]) -> List[Any]:
+        """
+        Stage 1: Extract data from the API with Pydantic validation.
+        
+        Args:
+            job_config: Job configuration dictionary
+            
+        Returns:
+            Iterator of raw data chunks (already Pydantic validated)
+            
+        Raises:
+            PipelineExecutionError: If data extraction fails
+        """
+        job_name = job_config.get("name", "unnamed_job")
+        
+        try:
+            # Fetch data using the adapter (includes Pydantic validation)
+            raw_data_chunks = list(self.adapter.fetch_historical_data(job_config))
+            
+            total_records = sum(len(chunk) if hasattr(chunk, '__len__') else 1 for chunk in raw_data_chunks)
+            self.stats.records_fetched = total_records
+            
+            logger.info(
+                "Data extraction completed",
+                job_name=job_name,
+                chunks_count=len(raw_data_chunks),
+                total_records=total_records
+            )
+            
+            return raw_data_chunks
+            
+        except Exception as e:
+            logger.error("Data extraction stage failed", job_name=job_name, error=str(e))
+            raise PipelineExecutionError(f"Data extraction failed: {e}") from e
+    
+    def _stage_data_transformation(self, raw_data: Any, job_name: str, chunk_idx: int) -> Any:
+        """
+        Stage 2: Transform data using the RuleEngine.
+        
+        Args:
+            raw_data: Raw data chunk from extraction stage
+            job_name: Job name for logging
+            chunk_idx: Chunk index for logging
+            
+        Returns:
+            Transformed data or original data if no transformation configured
+        """
+        try:
+            if self.rule_engine:
+                transformed_data = self.rule_engine.transform(raw_data)
+                
+                record_count = len(transformed_data) if hasattr(transformed_data, '__len__') else 1
+                self.stats.records_transformed += record_count
+                
+                logger.debug(
+                    "Data transformation completed",
+                    job_name=job_name,
+                    chunk_index=chunk_idx,
+                    records_transformed=record_count
+                )
+                
+                return transformed_data
+            else:
+                logger.debug(
+                    "No transformation engine configured, skipping transformation",
+                    job_name=job_name,
+                    chunk_index=chunk_idx
+                )
+                return raw_data
+                
+        except TransformationError as e:
+            logger.error(
+                "Data transformation failed",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                error=str(e)
+            )
+            self.stats.errors_encountered += 1
+            # Return original data to allow pipeline to continue
+            return raw_data
+        except Exception as e:
+            logger.error(
+                "Unexpected error in transformation stage",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            self.stats.errors_encountered += 1
+            # Return original data to allow pipeline to continue
+            return raw_data
+    
+    def _stage_data_validation(self, data: Any, job_name: str, chunk_idx: int) -> tuple[Any, Any]:
+        """
+        Stage 3: Validate transformed data and handle quarantine.
+        
+        Args:
+            data: Transformed data to validate
+            job_name: Job name for logging
+            chunk_idx: Chunk index for logging
+            
+        Returns:
+            Tuple of (validated_data, quarantined_data)
+        """
+        try:
+            # For now, we'll assume validation happens within the adapter
+            # Future implementation can add post-transformation validation here
+            
+            record_count = len(data) if hasattr(data, '__len__') else 1
+            self.stats.records_validated += record_count
+            
+            logger.debug(
+                "Data validation completed",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                records_validated=record_count,
+                records_quarantined=0
+            )
+            
+            return data, []
+            
+        except Exception as e:
+            logger.error(
+                "Data validation failed",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            self.stats.errors_encountered += 1
+            # Return original data and empty quarantine list
+            return data, []
+    
+    def _stage_data_storage(self, data: Any, job_name: str, chunk_idx: int) -> bool:
+        """
+        Stage 4: Store validated data in TimescaleDB.
+        
+        Args:
+            data: Validated data to store
+            job_name: Job name for logging
+            chunk_idx: Chunk index for logging
+            
+        Returns:
+            True if storage succeeded, False otherwise
+        """
+        try:
+            if not data:
+                logger.debug("No data to store", job_name=job_name, chunk_index=chunk_idx)
+                return True
+            
+            # Store data using TimescaleDefinitionLoader
+            if isinstance(data, list):
+                self.storage_loader.insert_definition_records(data)
+            else:
+                # Handle single record
+                self.storage_loader.insert_definition_records([data])
+            
+            record_count = len(data) if hasattr(data, '__len__') else 1
+            self.stats.records_stored += record_count
+            
+            logger.debug(
+                "Data storage completed",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                records_stored=record_count
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(
+                "Data storage failed",
+                job_name=job_name,
+                chunk_index=chunk_idx,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            self.stats.errors_encountered += 1
+            return False
+    
+    def execute_ingestion(
+        self,
+        api_type: str,
+        job_name: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Execute a complete data ingestion pipeline.
+        
+        This is the main entry point for pipeline execution. It loads configuration,
+        initializes components, and executes the appropriate pipeline based on API type.
+        
+        Args:
+            api_type: Type of API to use (e.g., 'databento')
+            job_name: Name of predefined job in config, or None for custom job
+            overrides: Optional parameter overrides for the job
+            
+        Returns:
+            True if pipeline completed successfully, False otherwise
+        """
+        try:
+            logger.info(
+                "Starting ingestion pipeline",
+                api_type=api_type,
+                job_name=job_name,
+                overrides=overrides
+            )
+            
+            # Load API-specific configuration
+            api_config = self.load_api_config(api_type)
+            
+            # Get job configuration
+            if job_name:
+                job_config = self._get_predefined_job_config(api_config, job_name)
+            else:
+                job_config = self._build_job_config_from_overrides(overrides or {})
+            
+            # Apply any overrides
+            if overrides:
+                job_config.update(overrides)
+            
+            # Initialize pipeline components
+            self.initialize_components(api_type, api_config)
+            
+            # Execute the appropriate pipeline
+            if api_type == "databento":
+                success = self.execute_databento_pipeline(job_config)
+            else:
+                raise UnsupportedAPIError(f"Pipeline execution not implemented for API type: {api_type}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(
+                "Ingestion pipeline failed",
+                api_type=api_type,
+                job_name=job_name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return False
+        finally:
+            self.cleanup_components()
+    
+    def _get_predefined_job_config(self, api_config: Dict[str, Any], job_name: str) -> Dict[str, Any]:
+        """Get a predefined job configuration by name."""
+        jobs = api_config.get("jobs", [])
+        
+        for job in jobs:
+            if job.get("name") == job_name:
+                logger.info("Found predefined job configuration", job_name=job_name)
+                return job.copy()
+        
+        available_jobs = [job.get("name") for job in jobs if job.get("name")]
+        raise ValueError(f"Job '{job_name}' not found. Available jobs: {available_jobs}")
+    
+    def _build_job_config_from_overrides(self, overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """Build job configuration from override parameters."""
+        # This would be implemented to support CLI parameter overrides
+        # For now, return the overrides as-is
+        logger.info("Building job configuration from overrides", overrides=overrides)
+        return overrides
