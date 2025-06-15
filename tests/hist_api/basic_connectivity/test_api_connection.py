@@ -100,7 +100,7 @@ def check_environment():
     if not api_key:
         print("❌ DATABENTO_API_KEY environment variable not set!")
         print("   Please set it in your .env file:")
-        print("   DATABENTO_API_KEY=db-your-32-character-key")
+        print("   DATABENTO_API_KEY=db-EXAMPLE-API-KEY-PLACEHOLDER")
         return False
     
     if not api_key.startswith("db-"):
