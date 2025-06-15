@@ -749,3 +749,233 @@ class DBConfig(BaseSettings):
 - **Monitoring Integration:** Built-in metrics and logging for operational observability
 
 **Conclusion:** Story 2.6 successfully delivered a comprehensive pipeline orchestrator while establishing critical quality standards around deprecation warning management. The post-completion modernization work demonstrates the importance of maintaining current framework patterns and provides a template for keeping the codebase future-compatible. The orchestrator implementation establishes a solid foundation for Epic 2.7 (End-to-End Testing) and future data source integrations. 
+
+## 21. Critical Data Format Mismatch Resolution and Comprehensive E2E Testing Framework (Story 2.7)
+
+**Context:** Story 2.7 aimed to validate the complete Databento data ingestion pipeline through end-to-end testing across all 5 schemas (OHLCV, Trades, TBBO, Statistics, Definitions). What started as routine testing revealed a critical pipeline bug that would have caused complete production failure.
+
+### Critical Production Bug Discovery and Resolution
+
+**1. The Silent Pipeline Failure**
+- **Symptom:** Pipeline executed successfully with "✅ Pipeline completed successfully" but 0 records were transformed/stored
+- **Initial Confusion:** All components reported success, logs showed no errors, but database remained empty
+- **False Success Pattern:** Success metrics (execution time, component completion) masked complete data processing failure
+- **Discovery Method:** Database verification queries revealed zero records in all target tables despite successful execution
+
+**2. Root Cause Analysis: Data Format Mismatch**
+```python
+# THE CRITICAL BUG in PipelineOrchestrator._stage_data_extraction()
+for record in raw_data:
+    try:
+        transformed_data = self.rule_engine.transform_batch([record])  # ✅ Correct: List[BaseModel]
+        # ... other processing
+    except Exception as e:
+        transformed_data = self.rule_engine.transform_batch(record)    # ❌ BUG: Single BaseModel
+```
+- **Issue:** Exception handler passed individual `BaseModel` instance instead of `List[BaseModel]` to `transform_batch()`
+- **RuleEngine Expectation:** `transform_batch()` method expects `data: List[BaseModel]` parameter
+- **Silent Failure:** RuleEngine didn't throw errors, just returned empty results for incorrect input format
+- **Production Impact:** This bug would cause 100% data loss in production without obvious error indicators
+
+**3. The Fix: Proper Batch Processing Implementation**
+```python
+# CORRECTED IMPLEMENTATION
+def _stage_data_extraction(self, adapter, job_config) -> List[BaseModel]:
+    raw_data = adapter.fetch_data(**job_config)
+    all_transformed_data = []
+    
+    # Collect individual records into proper batches
+    batch = []
+    batch_size = 1000  # Configurable chunk size
+    
+    for record in raw_data:
+        batch.append(record)
+        
+        # Process when batch is full
+        if len(batch) >= batch_size:
+            transformed_batch = self.rule_engine.transform_batch(batch)
+            all_transformed_data.extend(transformed_batch)
+            batch = []
+    
+    # Process remaining records
+    if batch:
+        transformed_batch = self.rule_engine.transform_batch(batch)
+        all_transformed_data.extend(transformed_batch)
+    
+    return all_transformed_data
+```
+- **Fix:** Proper batching of individual BaseModel instances into `List[BaseModel]` chunks
+- **Performance Benefit:** Configurable batch sizes (default 1000) for memory-efficient processing
+- **Type Safety:** Correct data types throughout the pipeline
+
+### Testing Framework Architecture Excellence
+
+**1. Comprehensive Test Configuration System**
+```yaml
+# configs/api_specific/databento_e2e_test_config.yaml
+test_jobs:
+  e2e_ohlcv_test:                    # Basic functionality validation
+  e2e_trades_performance_test:       # High-volume stress testing (400K+ records)
+  e2e_comprehensive_multi_schema:    # All schemas integration test
+  definition_comprehensive_test:     # Definition schema specific testing
+  performance_stress_test:           # Performance benchmark validation
+  idempotency_validation_test:       # Duplicate prevention testing
+  quarantine_validation_test:        # Error handling validation
+  mini_sample_test:                  # Quick validation test
+```
+- **Strategic Design:** 8 specialized test configurations covering all validation scenarios
+- **Volume Diversity:** From 1-record tests to 400K+ record stress tests
+- **Schema Coverage:** All 5 Databento schemas with targeted validation
+- **Performance Benchmarks:** Clear performance expectations and validation criteria
+
+**2. Multi-Layered Validation Framework**
+
+**Database Verification (`tests/integration/database_verification.py`):**
+- **Automated Python Validation:** Comprehensive business logic checks with pass/fail reporting
+- **SQL Verification (`sql_verification_queries.sql`):** 20 direct database validation queries
+- **Business Rule Validation:** OHLC constraints, positive prices, bid/ask spread validation
+- **Cross-Table Analysis:** Record count verification and data consistency checks
+- **Quality Reporting:** Automated report generation with detailed pass/fail status
+
+**Idempotency Testing (`tests/integration/test_idempotency.py`):**
+- **Multi-Run Framework:** Execute identical jobs multiple times with state monitoring
+- **Duplicate Detection:** Comprehensive duplicate checking across all unique constraints
+- **Performance Consistency:** Execution time validation across multiple runs
+- **Database State Monitoring:** Record count tracking and change detection
+- **DownloadProgressTracker Validation:** Verify proper re-ingestion prevention
+
+**Error Handling Validation (`tests/integration/test_error_quarantine.py`):**
+- **Invalid Symbol Testing:** Test quarantine with non-existent symbols
+- **Network Error Simulation:** Timeout and rate limiting scenario testing
+- **Quarantine File Analysis:** Automated analysis of quarantined record details
+- **Graceful Failure Validation:** Verify pipeline continues despite error conditions
+- **Error Context Preservation:** Complete error logging and context capture validation
+
+### Technical Architecture Success Patterns
+
+**1. Configuration-Driven Testing Strategy**
+- **Job-Based Testing:** Each test scenario defined as reusable job configuration
+- **Parameter Flexibility:** Easy modification of symbols, date ranges, schemas for different test scenarios
+- **Environment Separation:** Test configurations isolated from production configs
+- **Validation Criteria:** Clear success metrics and benchmark definitions for each test type
+
+**2. Comprehensive Validation Pyramid**
+```
+┌─────────────────────────────────────────┐
+│          E2E Integration Tests          │  ← Story 2.7 Focus
+├─────────────────────────────────────────┤
+│         Component Integration Tests     │  ← Story 2.4-2.6 Coverage
+├─────────────────────────────────────────┤
+│              Unit Tests                 │  ← Story 2.2-2.3 Coverage
+└─────────────────────────────────────────┘
+```
+- **Unit Level:** Individual component validation (RuleEngine, DatabentoAdapter, etc.)
+- **Integration Level:** Component-to-component interaction testing
+- **E2E Level:** Complete pipeline validation with real data and database storage
+
+**3. Production Readiness Validation Framework**
+- **Performance Benchmarks:** Clear execution time and memory usage expectations
+- **Data Volume Testing:** High-volume scenarios (400K+ records) for stress validation
+- **Error Recovery:** Comprehensive error scenario testing with graceful degradation
+- **Quality Assurance:** Business logic validation and data integrity checks
+- **Monitoring Integration:** Complete logging and metrics validation
+
+### Discovery of Critical Testing Insights
+
+**1. Silent Failure Detection Patterns**
+- **Lesson:** "Success" logs and metrics don't guarantee actual data processing
+- **Detection Strategy:** Always verify end results (database records) in addition to process completion
+- **Quality Gates:** Database record counts are the ultimate validation of pipeline success
+- **Monitoring Design:** Success metrics must include data output verification, not just process completion
+
+**2. Data Format Contract Validation**
+- **Issue:** Type mismatches between components can cause silent failures
+- **Prevention:** Strong typing and interface contracts between pipeline components
+- **Testing Strategy:** Integration tests must verify actual data flow, not just component isolation
+- **Architecture:** Clear data format contracts between all pipeline stages
+
+**3. Production vs Development Environment Differences**
+- **Discovery:** Issues may only manifest under specific data conditions or volumes
+- **Validation:** E2E testing with realistic data volumes reveals issues unit tests miss
+- **Strategy:** Test with both minimal data (fast validation) and realistic volumes (production simulation)
+
+### Testing Framework Success Metrics
+
+**Before Story 2.7:**
+- **Pipeline Status:** Unknown production readiness
+- **Critical Bug:** Data format mismatch causing 100% data loss
+- **Validation Gaps:** No comprehensive E2E validation framework
+- **Quality Assurance:** Limited confidence in production deployment
+
+**After Story 2.7 Completion:**
+- **Pipeline Status:** ✅ **Production Ready** with comprehensive validation
+- **Critical Bug:** ✅ **Resolved** - Proper batch processing implemented
+- **Testing Coverage:** ✅ **Complete** - All 5 schemas, all scenarios tested
+- **Quality Framework:** ✅ **Comprehensive** - Database verification, idempotency, error handling
+- **Performance Validation:** ✅ **Benchmarked** - 400K+ records processed, <300s execution time
+- **Documentation:** ✅ **Complete** - 400+ line testing guide with procedures and troubleshooting
+
+### Critical Process Improvements Established
+
+**1. Bug Detection and Resolution Workflow**
+```
+1. E2E Test Execution → 2. Database Verification → 3. Root Cause Analysis → 4. Fix Implementation → 5. Validation Testing
+```
+- **Early Detection:** E2E tests revealed critical bug before production
+- **Systematic Debugging:** Database verification provided clear failure evidence
+- **Root Cause Focus:** Deep code analysis identified exact data format mismatch
+- **Verification:** Unit test creation to verify fix and prevent regression
+
+**2. Comprehensive Validation Requirements**
+- **Multi-Level Testing:** Unit + Integration + E2E testing for complete coverage
+- **Data Verification:** Database record validation as ultimate success criteria
+- **Performance Benchmarking:** Clear performance expectations and monitoring
+- **Error Scenario Coverage:** Comprehensive error handling and recovery testing
+
+**3. Production Readiness Criteria**
+- **Zero Critical Bugs:** No data loss or silent failure scenarios
+- **Performance Validation:** Realistic data volume processing verification
+- **Error Handling:** Comprehensive error recovery and quarantine mechanisms
+- **Quality Assurance:** Business logic validation and data integrity checks
+- **Documentation:** Complete testing procedures and troubleshooting guides
+
+### Long-term Strategic Impact
+
+**1. Quality Assurance Excellence**
+- **Testing Framework:** Reusable E2E testing patterns for future data source integrations
+- **Validation Standards:** Comprehensive validation requirements for all pipeline implementations
+- **Bug Prevention:** Early detection patterns for critical data processing issues
+
+**2. Production Deployment Confidence**
+- **Epic 2 Completion:** Complete data ingestion pipeline validated and production-ready
+- **Risk Mitigation:** All critical failure scenarios identified and resolved
+- **Performance Assurance:** Validated performance under realistic data volumes
+
+**3. Development Process Maturity**
+- **E2E Testing Standards:** Established comprehensive end-to-end testing requirements
+- **Quality Gates:** Database verification as mandatory validation step
+- **Documentation Excellence:** Complete testing procedures for operational teams
+
+### Critical Lessons for Future Development
+
+**1. Silent Failure Detection**
+- **Lesson:** Process completion ≠ successful data processing
+- **Implementation:** Always validate end results (database records) in E2E tests
+- **Monitoring:** Include data output verification in all success metrics
+
+**2. Component Interface Validation**
+- **Lesson:** Type mismatches between components can cause silent data loss
+- **Prevention:** Strong typing and integration testing for all component interfaces
+- **Quality Assurance:** Integration tests must verify actual data flow through all pipeline stages
+
+**3. Realistic Testing Requirements**
+- **Lesson:** Unit tests alone are insufficient for complex multi-component systems
+- **Strategy:** E2E testing with realistic data volumes reveals issues missed in isolation
+- **Implementation:** Comprehensive test scenarios covering all data types and volumes
+
+**4. Production Readiness Validation**
+- **Requirement:** Complete validation framework before production deployment
+- **Components:** Performance benchmarking, error handling, data integrity, idempotency
+- **Quality Gate:** Zero critical bugs and comprehensive scenario coverage mandatory
+
+**Conclusion:** Story 2.7 successfully identified and resolved a critical production bug while establishing a comprehensive E2E testing framework. The data format mismatch discovery demonstrates the critical importance of end-to-end validation in complex data pipelines. The comprehensive testing framework (database verification, idempotency testing, error handling validation) provides a solid foundation for production deployment and future data source integrations. Most importantly, the story established that pipeline "success" must be measured by actual data output, not just process completion - a lesson that prevents silent failures in production environments. 

@@ -139,6 +139,43 @@ jobs:
     start_date: "2023-01-01"
     end_date: "2024-01-01"
     date_chunk_interval_days: 365
+    
+  # End-to-End Test Jobs (Story 2.7) - Correct Symbol Formats
+  - name: "e2e_ohlcv_test"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["ES.c.0"]  # Correct continuous contract format
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-16"
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_trades_test"
+    dataset: "GLBX.MDP3"
+    schema: "trades"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"  # Single day for trades test
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_tbbo_test"
+    dataset: "GLBX.MDP3"
+    schema: "tbbo"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_statistics_test"
+    dataset: "GLBX.MDP3"
+    schema: "statistics"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-01"
+    end_date: "2024-01-31"
+    date_chunk_interval_days: 30
 
 # Retry Policy Configuration
 retry_policy:

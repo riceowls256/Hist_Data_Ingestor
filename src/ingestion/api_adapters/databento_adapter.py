@@ -230,6 +230,65 @@ class DatabentoAdapter(BaseAdapter):
         logger.info(f"Generated {len(chunks)} date chunks", chunks=len(chunks))
         return chunks
 
+    def _record_to_dict(self, record) -> Dict[str, Any]:
+        """
+        Convert a Databento record to dictionary using direct attribute access.
+        
+        This method handles the conversion from Databento record objects to dictionaries,
+        using direct attribute access and proper data preprocessing for Pydantic validation.
+        
+        Args:
+            record: Databento record object (OHLCVMsg, TradeMsg, etc.)
+            
+        Returns:
+            Dictionary representation of the record with properly converted types
+        """
+        from datetime import datetime, UTC
+        from decimal import Decimal
+        
+        record_dict = {}
+        
+        # Define fields we want to extract and their conversions
+        field_mappings = {
+            'ts_event': lambda x: datetime.fromtimestamp(x / 1_000_000_000, tz=UTC),  # Convert nanoseconds to datetime
+            'instrument_id': lambda x: x,
+            'open': lambda x: Decimal(str(x / 1_000_000_000)),  # Convert to decimal (prices are in nanounits)
+            'high': lambda x: Decimal(str(x / 1_000_000_000)),
+            'low': lambda x: Decimal(str(x / 1_000_000_000)),
+            'close': lambda x: Decimal(str(x / 1_000_000_000)),
+            'volume': lambda x: x,
+            'price': lambda x: Decimal(str(x / 1_000_000_000)),  # For trades
+            'size': lambda x: x,  # For trades
+            'bid_px_00': lambda x: Decimal(str(x / 1_000_000_000)) if x is not None else None,  # For TBBO
+            'ask_px_00': lambda x: Decimal(str(x / 1_000_000_000)) if x is not None else None,
+            'bid_sz_00': lambda x: x,
+            'ask_sz_00': lambda x: x,
+            'stat_type': lambda x: x.value if hasattr(x, 'value') else x,  # For statistics
+            'stat_value': lambda x: Decimal(str(x / 1_000_000_000)) if x is not None else None,
+            'publisher_id': lambda x: x,
+            'rtype': lambda x: x
+        }
+        
+        # Extract fields using mappings
+        for field, converter in field_mappings.items():
+            if hasattr(record, field):
+                try:
+                    value = getattr(record, field)
+                    if value is not None:
+                        record_dict[field] = converter(value)
+                    else:
+                        record_dict[field] = None
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.warning(f"Failed to convert field {field}: {e}")
+                    record_dict[field] = None
+        
+        # Add symbol field based on instrument_id (this is a simplification)
+        # In a real implementation, you'd want to maintain an instrument mapping
+        if 'instrument_id' in record_dict:
+            record_dict['symbol'] = f"INSTRUMENT_{record_dict['instrument_id']}"
+            
+        return record_dict
+
     def fetch_historical_data(self, job_config: Dict[str, Any]) -> Iterator[BaseModel]:
         """
         Fetches historical data from the Databento API based on the job configuration.
@@ -266,25 +325,29 @@ class DatabentoAdapter(BaseAdapter):
             for record in data_chunk:
                 validation_stats["total_records"] += 1
                 try:
+                    # Convert record to dictionary using direct attribute access
+                    record_dict = self._record_to_dict(record)
+                    
                     # Stage 1 Validation: Pydantic model instantiation
                     model_instance = model_cls.model_validate(
-                        record.as_dict(),
+                        record_dict,
                         strict=self.strict_mode
                     )
                     yield model_instance
                 except ValidationError as e:
                     validation_stats["failed_validation"] += 1
+                    record_dict = self._record_to_dict(record)
                     logger.warning(
                         "Pydantic validation failed for record",
                         schema=schema,
                         error=str(e),
-                        record_data=record.as_dict()
+                        record_data=record_dict
                     )
                     self.quarantine_manager.quarantine_record(
                         schema,
                         "pydantic_validation",
                         str(e),
-                        original_record=record.as_dict()
+                        original_record=record_dict
                     )
         
         logger.info(

@@ -284,14 +284,30 @@ class PipelineOrchestrator:
             
             # Initialize storage loader
             logger.info("Initializing TimescaleDefinitionLoader")
-            db_config = self.system_config.db
-            connection_params = {
-                'host': db_config.host,
-                'port': db_config.port,
-                'database': db_config.dbname,
-                'user': db_config.user,
-                'password': db_config.password
-            }
+            
+            # Check for test environment variables first, fallback to regular config
+            import os
+            if os.getenv('TIMESCALEDB_TEST_HOST'):
+                # Use test database configuration
+                connection_params = {
+                    'host': os.getenv('TIMESCALEDB_TEST_HOST'),
+                    'port': int(os.getenv('TIMESCALEDB_TEST_PORT', 5432)),
+                    'database': os.getenv('TIMESCALEDB_TEST_DB'),
+                    'user': os.getenv('TIMESCALEDB_TEST_USER'),
+                    'password': os.getenv('TIMESCALEDB_TEST_PASSWORD')
+                }
+                logger.info("Using test database configuration")
+            else:
+                # Use regular configuration
+                db_config = self.system_config.db
+                connection_params = {
+                    'host': db_config.host,
+                    'port': db_config.port,
+                    'database': db_config.dbname,
+                    'user': db_config.user,
+                    'password': db_config.password
+                }
+                logger.info("Using regular database configuration")
             self.storage_loader = TimescaleDefinitionLoader(connection_params)
             
             logger.info("All pipeline components initialized successfully", api_type=api_type)
@@ -403,7 +419,7 @@ class PipelineOrchestrator:
                 
                 # Stage 2: Data Transformation
                 logger.debug("Pipeline Stage 2: Data Transformation", job_name=job_name, chunk_index=chunk_idx)
-                transformed_data = self._stage_data_transformation(raw_data_chunk, job_name, chunk_idx)
+                transformed_data = self._stage_data_transformation(raw_data_chunk, job_config, chunk_idx)
                 
                 # Stage 3: Data Validation (Post-transformation)
                 logger.debug("Pipeline Stage 3: Data Validation", job_name=job_name, chunk_index=chunk_idx)
@@ -441,7 +457,7 @@ class PipelineOrchestrator:
             self.stats.errors_encountered += 1
             return False
     
-    def _stage_data_extraction(self, job_config: Dict[str, Any]) -> List[Any]:
+    def _stage_data_extraction(self, job_config: Dict[str, Any]) -> List[List[BaseModel]]:
         """
         Stage 1: Extract data from the API with Pydantic validation.
         
@@ -449,7 +465,7 @@ class PipelineOrchestrator:
             job_config: Job configuration dictionary
             
         Returns:
-            Iterator of raw data chunks (already Pydantic validated)
+            List of data chunks (each chunk is a List[BaseModel])
             
         Raises:
             PipelineExecutionError: If data extraction fails
@@ -458,16 +474,27 @@ class PipelineOrchestrator:
         
         try:
             # Fetch data using the adapter (includes Pydantic validation)
-            raw_data_chunks = list(self.adapter.fetch_historical_data(job_config))
+            # The adapter yields individual BaseModel instances, so we need to collect them into batches
+            raw_records = list(self.adapter.fetch_historical_data(job_config))
             
-            total_records = sum(len(chunk) if hasattr(chunk, '__len__') else 1 for chunk in raw_data_chunks)
+            # Group records into chunks for processing
+            # For now, we'll use a simple batching strategy
+            chunk_size = job_config.get("processing_batch_size", 1000)  # Default 1000 records per chunk
+            raw_data_chunks = []
+            
+            for i in range(0, len(raw_records), chunk_size):
+                chunk = raw_records[i:i + chunk_size]
+                raw_data_chunks.append(chunk)
+            
+            total_records = len(raw_records)
             self.stats.records_fetched = total_records
             
             logger.info(
                 "Data extraction completed",
                 job_name=job_name,
                 chunks_count=len(raw_data_chunks),
-                total_records=total_records
+                total_records=total_records,
+                chunk_size=chunk_size
             )
             
             return raw_data_chunks
@@ -476,21 +503,25 @@ class PipelineOrchestrator:
             logger.error("Data extraction stage failed", job_name=job_name, error=str(e))
             raise PipelineExecutionError(f"Data extraction failed: {e}") from e
     
-    def _stage_data_transformation(self, raw_data: Any, job_name: str, chunk_idx: int) -> Any:
+    def _stage_data_transformation(self, raw_data: Any, job_config: Dict[str, Any], chunk_idx: int) -> Any:
         """
         Stage 2: Transform data using the RuleEngine.
         
         Args:
             raw_data: Raw data chunk from extraction stage
-            job_name: Job name for logging
+            job_config: Job configuration dictionary
             chunk_idx: Chunk index for logging
             
         Returns:
             Transformed data or original data if no transformation configured
         """
+        job_name = job_config.get("name", "unnamed_job")
+        
         try:
             if self.rule_engine:
-                transformed_data = self.rule_engine.transform(raw_data)
+                # Get schema name from job config
+                schema_name = job_config.get("schema", "ohlcv-1d")  # Default fallback
+                transformed_data = self.rule_engine.transform_batch(raw_data, schema_name)
                 
                 record_count = len(transformed_data) if hasattr(transformed_data, '__len__') else 1
                 self.stats.records_transformed += record_count

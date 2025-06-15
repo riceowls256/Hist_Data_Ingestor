@@ -4,7 +4,8 @@ File I/O utilities for managing quarantined data.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, date, UTC
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -66,7 +67,7 @@ class QuarantineManager:
         if not self.enabled:
             return
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         session_dir = self.base_dir / now.strftime("%Y-%m-%d_%H-%M-%S")
         session_dir.mkdir(exist_ok=True)
         
