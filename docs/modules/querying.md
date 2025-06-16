@@ -68,7 +68,19 @@ The querying module integrates seamlessly with the existing system architecture:
 
 ## Usage Patterns
 
-### Basic Query Example
+### CLI Interface (Recommended for End Users)
+```bash
+# Query daily OHLCV data
+python main.py query -s ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31
+
+# Multiple symbols with CSV output
+python main.py query --symbols ES.c.0,NQ.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --output-format csv
+
+# Trades data with file output
+python main.py query -s ES.c.0 --schema trades --start-date 2024-01-01 --end-date 2024-01-01 --output-file trades.json --output-format json
+```
+
+### Programmatic API Usage
 ```python
 from src.querying import QueryBuilder
 from datetime import date

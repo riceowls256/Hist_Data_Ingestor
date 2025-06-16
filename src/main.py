@@ -5,11 +5,15 @@ This module provides the command-line interface for executing data ingestion
 pipelines, querying stored data, and managing the system.
 """
 
+import csv
+import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
+from io import StringIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import typer
 from rich.console import Console
@@ -20,6 +24,8 @@ from rich.table import Table
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.pipeline_orchestrator import PipelineOrchestrator, PipelineError
+from querying import QueryBuilder
+from querying.exceptions import QueryingError, SymbolResolutionError, QueryExecutionError
 from utils.custom_logger import setup_logging, get_logger
 
 # Initialize the Typer app
@@ -36,6 +42,16 @@ console = Console()
 setup_logging()
 logger = get_logger(__name__)
 
+# Schema mapping for CLI query command
+SCHEMA_MAPPING = {
+    "ohlcv-1d": "query_daily_ohlcv",
+    "ohlcv": "query_daily_ohlcv",  # Alias
+    "trades": "query_trades",
+    "tbbo": "query_tbbo", 
+    "statistics": "query_statistics",
+    "definitions": "query_definitions"
+}
+
 
 def validate_date_format(date_str: str) -> bool:
     """Validate date string is in YYYY-MM-DD format."""
@@ -49,6 +65,421 @@ def validate_date_format(date_str: str) -> bool:
 def parse_symbols(symbols_str: str) -> list[str]:
     """Parse comma-separated symbols string into list."""
     return [symbol.strip() for symbol in symbols_str.split(",") if symbol.strip()]
+
+
+def parse_query_symbols(symbols_input: List[str]) -> List[str]:
+    """Parse symbols from CLI input (handles both comma-separated and multiple flags)."""
+    parsed_symbols = []
+    for symbol_group in symbols_input:
+        if "," in symbol_group:
+            # Handle comma-separated: "ES.c.0,NQ.c.0"
+            parsed_symbols.extend([s.strip() for s in symbol_group.split(",") if s.strip()])
+        else:
+            # Handle single symbol
+            symbol = symbol_group.strip()
+            if symbol:  # Only add non-empty symbols
+                parsed_symbols.append(symbol)
+    return parsed_symbols
+
+
+def parse_date_string(date_str: str) -> date:
+    """Parse date string to date object."""
+    return datetime.strptime(date_str, "%Y-%m-%d").date()
+
+
+def validate_query_scope(symbols: List[str], start_date: date, end_date: date, schema: str) -> bool:
+    """Validate query scope and warn about large result sets."""
+    days = (end_date - start_date).days
+    
+    if schema == "trades" and days > 1:
+        console.print("⚠️  [yellow]Warning: Trades data for multiple days can be very large[/yellow]")
+        return typer.confirm("Continue with this query?")
+    
+    if schema == "tbbo" and days > 1:
+        console.print("⚠️  [yellow]Warning: TBBO data for multiple days can be very large[/yellow]")
+        return typer.confirm("Continue with this query?")
+    
+    if len(symbols) > 10:
+        console.print(f"⚠️  [yellow]Warning: Querying {len(symbols)} symbols may take some time[/yellow]")
+        return typer.confirm("Continue with this query?")
+    
+    return True
+
+
+def format_table_output(results: List[Dict], schema: str) -> Table:
+    """Format query results as Rich table for console display."""
+    table = Table(show_header=True, header_style="bold magenta")
+    
+    if not results:
+        table.add_column("Message")
+        table.add_row("No data found for the specified criteria.")
+        return table
+    
+    # Add columns based on schema
+    if schema.startswith("ohlcv"):
+        table.add_column("Symbol")
+        table.add_column("Date")
+        table.add_column("Open")
+        table.add_column("High")
+        table.add_column("Low")
+        table.add_column("Close")
+        table.add_column("Volume")
+        
+        for row in results:
+            table.add_row(
+                str(row.get("symbol", "")),
+                str(row.get("ts_event", "")).split("T")[0] if row.get("ts_event") else "",
+                str(row.get("open_price", "")),
+                str(row.get("high_price", "")),
+                str(row.get("low_price", "")),
+                str(row.get("close_price", "")),
+                str(row.get("volume", ""))
+            )
+    elif schema == "trades":
+        table.add_column("Symbol")
+        table.add_column("Timestamp")
+        table.add_column("Price")
+        table.add_column("Size")
+        table.add_column("Side")
+        
+        for row in results:
+            table.add_row(
+                str(row.get("symbol", "")),
+                str(row.get("ts_event", "")),
+                str(row.get("price", "")),
+                str(row.get("size", "")),
+                str(row.get("side", ""))
+            )
+    elif schema == "tbbo":
+        table.add_column("Symbol")
+        table.add_column("Timestamp")
+        table.add_column("Bid Price")
+        table.add_column("Bid Size")
+        table.add_column("Ask Price")
+        table.add_column("Ask Size")
+        
+        for row in results:
+            table.add_row(
+                str(row.get("symbol", "")),
+                str(row.get("ts_event", "")),
+                str(row.get("bid_px_00", "")),
+                str(row.get("bid_sz_00", "")),
+                str(row.get("ask_px_00", "")),
+                str(row.get("ask_sz_00", ""))
+            )
+    elif schema == "statistics":
+        table.add_column("Symbol")
+        table.add_column("Timestamp")
+        table.add_column("Stat Type")
+        table.add_column("Value")
+        table.add_column("Update Action")
+        
+        for row in results:
+            table.add_row(
+                str(row.get("symbol", "")),
+                str(row.get("ts_event", "")),
+                str(row.get("stat_type", "")),
+                str(row.get("stat_value", "")),
+                str(row.get("update_action", ""))
+            )
+    elif schema == "definitions":
+        table.add_column("Symbol")
+        table.add_column("Raw Symbol")
+        table.add_column("Asset")
+        table.add_column("Exchange")
+        table.add_column("Currency")
+        table.add_column("Tick Size")
+        
+        for row in results:
+            table.add_row(
+                str(row.get("symbol", "")),
+                str(row.get("raw_symbol", "")),
+                str(row.get("asset", "")),
+                str(row.get("exchange", "")),
+                str(row.get("currency", "")),
+                str(row.get("tick_size", ""))
+            )
+    else:
+        # Generic table for unknown schemas
+        if results:
+            for key in results[0].keys():
+                table.add_column(key.replace("_", " ").title())
+            
+            for row in results:
+                table.add_row(*[str(value) for value in row.values()])
+    
+    return table
+
+
+def format_csv_output(results: List[Dict]) -> str:
+    """Format query results as CSV string."""
+    if not results:
+        return ""
+    
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=results[0].keys())
+    writer.writeheader()
+    
+    for row in results:
+        # Handle Decimal and datetime serialization
+        serialized_row = {}
+        for key, value in row.items():
+            if isinstance(value, Decimal):
+                serialized_row[key] = str(value)
+            elif isinstance(value, datetime):
+                serialized_row[key] = value.isoformat()
+            else:
+                serialized_row[key] = value
+        writer.writerow(serialized_row)
+    
+    return output.getvalue()
+
+
+def format_json_output(results: List[Dict]) -> str:
+    """Format query results as JSON string."""
+    def json_serializer(obj):
+        if isinstance(obj, Decimal):
+            return str(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+    
+    return json.dumps(results, indent=2, default=json_serializer)
+
+
+def write_output_file(content: str, file_path: str, format_type: str):
+    """Write formatted content to file with proper error handling."""
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        console.print(f"✅ [green]Output written to {file_path}[/green]")
+    except IOError as e:
+        console.print(f"❌ [red]Failed to write file {file_path}: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def query(
+    symbols: List[str] = typer.Option(
+        ..., 
+        "--symbols", "-s", 
+        help="Security symbols (e.g., ES.c.0, NQ.c.0). Can be comma-separated or multiple -s flags"
+    ),
+    start_date: str = typer.Option(
+        ..., 
+        "--start-date", "-sd", 
+        help="Start date (YYYY-MM-DD)"
+    ),
+    end_date: str = typer.Option(
+        ..., 
+        "--end-date", "-ed", 
+        help="End date (YYYY-MM-DD)"
+    ),
+    schema: str = typer.Option(
+        "ohlcv-1d", 
+        "--schema", 
+        help="Schema type (ohlcv-1d, trades, tbbo, statistics, definitions)"
+    ),
+    output_format: str = typer.Option(
+        "table", 
+        "--output-format", "-f", 
+        help="Output format (table, csv, json)"
+    ),
+    output_file: Optional[str] = typer.Option(
+        None, 
+        "--output-file", "-o", 
+        help="Output file path"
+    ),
+    limit: Optional[int] = typer.Option(
+        None, 
+        "--limit", 
+        help="Limit number of results"
+    ),
+):
+    """
+    Query historical financial data from TimescaleDB.
+    
+    Examples:
+    
+        # Query daily OHLCV data for ES futures
+        python main.py query -s ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31
+        
+        # Query multiple symbols with CSV output
+        python main.py query --symbols ES.c.0,NQ.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --output-format csv
+        
+        # Query trades data with file output
+        python main.py query -s ES.c.0 --schema trades --start-date 2024-01-01 --end-date 2024-01-01 --output-file trades.json --output-format json
+        
+        # Query with limit
+        python main.py query -s ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --limit 100
+    """
+    console.print("🔍 [bold blue]Querying historical financial data[/bold blue]")
+    
+    try:
+        # Parse and validate symbols
+        parsed_symbols = parse_query_symbols(symbols)
+        if not parsed_symbols:
+            console.print("❌ [red]Error: No valid symbols provided[/red]")
+            raise typer.Exit(1)
+        
+        # Validate date format
+        if not validate_date_format(start_date):
+            console.print("❌ [red]Error: start-date must be in YYYY-MM-DD format[/red]")
+            raise typer.Exit(1)
+            
+        if not validate_date_format(end_date):
+            console.print("❌ [red]Error: end-date must be in YYYY-MM-DD format[/red]")
+            raise typer.Exit(1)
+        
+        # Parse dates
+        start_date_obj = parse_date_string(start_date)
+        end_date_obj = parse_date_string(end_date)
+        
+        # Validate date range
+        if start_date_obj > end_date_obj:
+            console.print("❌ [red]Error: start-date must be before or equal to end-date[/red]")
+            raise typer.Exit(1)
+        
+        # Validate schema
+        if schema not in SCHEMA_MAPPING:
+            console.print(f"❌ [red]Error: Invalid schema '{schema}'. Valid options: {', '.join(SCHEMA_MAPPING.keys())}[/red]")
+            raise typer.Exit(1)
+        
+        # Validate output format
+        if output_format not in ["table", "csv", "json"]:
+            console.print("❌ [red]Error: Invalid output format. Valid options: table, csv, json[/red]")
+            raise typer.Exit(1)
+        
+        # Validate query scope and get user confirmation if needed
+        if not validate_query_scope(parsed_symbols, start_date_obj, end_date_obj, schema):
+            console.print("⏹️  [yellow]Query cancelled by user[/yellow]")
+            raise typer.Exit(0)
+        
+        # Display query configuration
+        console.print("📋 [cyan]Query configuration:[/cyan]")
+        config_table = Table(show_header=True, header_style="bold magenta")
+        config_table.add_column("Parameter")
+        config_table.add_column("Value")
+        
+        config_table.add_row("Symbols", ", ".join(parsed_symbols))
+        config_table.add_row("Date Range", f"{start_date} to {end_date}")
+        config_table.add_row("Schema", schema)
+        config_table.add_row("Output Format", output_format)
+        if output_file:
+            config_table.add_row("Output File", output_file)
+        if limit:
+            config_table.add_row("Limit", str(limit))
+        
+        console.print(config_table)
+        
+        # Execute query with progress indicator
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Querying {schema} data for {len(parsed_symbols)} symbols...", total=None)
+            
+            start_time = datetime.now()
+            
+            with QueryBuilder() as qb:
+                # Get the appropriate query method
+                query_method_name = SCHEMA_MAPPING[schema]
+                query_method = getattr(qb, query_method_name)
+                
+                # Build query parameters
+                query_params = {
+                    "symbols": parsed_symbols,
+                    "start_date": start_date_obj,
+                    "end_date": end_date_obj
+                }
+                
+                if limit:
+                    query_params["limit"] = limit
+                
+                # Execute query
+                results = query_method(**query_params)
+            
+            progress.update(task, completed=True)
+            
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+        
+        # Handle results
+        if not results:
+            console.print("ℹ️  [yellow]No data found for the specified criteria.[/yellow]")
+            if output_file:
+                # Write empty file
+                write_output_file("", output_file, output_format)
+            return
+        
+        console.print(f"✅ [green]Found {len(results)} records in {execution_time:.2f} seconds[/green]")
+        
+        # Format and display/save results
+        if output_format == "table":
+            table = format_table_output(results, schema)
+            if output_file:
+                # For table format to file, use CSV instead
+                csv_content = format_csv_output(results)
+                write_output_file(csv_content, output_file, "csv")
+                console.print("ℹ️  [yellow]Note: Table format saved as CSV to file[/yellow]")
+            else:
+                console.print("\n📊 [bold cyan]Query Results:[/bold cyan]")
+                console.print(table)
+        
+        elif output_format == "csv":
+            csv_content = format_csv_output(results)
+            if output_file:
+                write_output_file(csv_content, output_file, "csv")
+            else:
+                console.print("\n📊 [bold cyan]Query Results (CSV):[/bold cyan]")
+                console.print(csv_content)
+        
+        elif output_format == "json":
+            json_content = format_json_output(results)
+            if output_file:
+                write_output_file(json_content, output_file, "json")
+            else:
+                console.print("\n📊 [bold cyan]Query Results (JSON):[/bold cyan]")
+                console.print(json_content)
+        
+        # Display summary
+        console.print(f"\n📈 [bold green]Query completed successfully![/bold green]")
+        console.print(f"Records: {len(results)} | Time: {execution_time:.2f}s | Schema: {schema}")
+        
+    except SymbolResolutionError as e:
+        console.print(f"❌ [red]Symbol error: {e}[/red]")
+        
+        # Helpful suggestion - show available symbols
+        try:
+            with QueryBuilder() as qb:
+                available = qb.get_available_symbols(limit=10)
+                if available:
+                    console.print("💡 [yellow]Available symbols (sample):[/yellow]")
+                    for symbol in available[:5]:
+                        console.print(f"   • {symbol}")
+                    console.print("   Use 'python main.py query --help' for more information")
+        except Exception:
+            pass  # Don't fail if we can't get available symbols
+        
+        logger.error("Symbol resolution failed", error=str(e), symbols=parsed_symbols)
+        raise typer.Exit(1)
+        
+    except QueryExecutionError as e:
+        console.print(f"❌ [red]Database error: {e}[/red]")
+        console.print("💡 [yellow]Check database connection and try again[/yellow]")
+        logger.error("Query execution failed", error=str(e))
+        raise typer.Exit(1)
+        
+    except QueryingError as e:
+        console.print(f"❌ [red]Query error: {e}[/red]")
+        logger.error("General querying error", error=str(e))
+        raise typer.Exit(1)
+        
+    except Exception as e:
+        console.print(f"❌ [red]Unexpected error: {e}[/red]")
+        logger.error("Unexpected error in query command", error=str(e), error_type=type(e).__name__)
+        raise typer.Exit(1)
 
 
 @app.command()

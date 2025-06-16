@@ -20,6 +20,43 @@ from typing import Dict, List, Optional
 
 import yaml
 
+
+class DetailedTestResult(unittest.TestResult):
+    """Custom test result collector for detailed reporting."""
+    
+    def __init__(self):
+        super().__init__()
+        self.successes = []
+        self.test_details = []
+    
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.successes.append(test)
+        self.test_details.append({
+            'name': str(test),
+            'status': 'PASS',
+            'duration': getattr(test, '_duration', 0)
+        })
+    
+    def addError(self, test, err):
+        super().addError(test, err)
+        self.test_details.append({
+            'name': str(test),
+            'status': 'ERROR',
+            'error': str(err[1])
+        })
+    
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        self.test_details.append({
+            'name': str(test),
+            'status': 'FAIL',
+            'error': str(err[1])
+        })
+    
+    def get_detailed_results(self):
+        return self.test_details
+
 # Add src to Python path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / 'src'))

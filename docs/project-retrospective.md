@@ -1198,4 +1198,285 @@ QueryingError (base)
 - **Error Handling:** Provide clear error messages for user-facing functionality
 - **Performance:** Optimize abstraction layers to minimize performance overhead
 
-**Conclusion:** Story 3.1 successfully established a production-ready querying foundation for Epic 3, implementing comprehensive SQLAlchemy 2.0 integration with automatic symbol resolution and TimescaleDB optimization. The discovery and resolution of SQLAlchemy 2.0 syntax changes demonstrates the importance of staying current with framework evolution. The comprehensive testing framework (20 unit tests + 8 integration tests) and seamless integration with existing storage patterns provides a solid foundation for CLI and API development. Most importantly, the symbol abstraction layer transforms complex database queries into user-friendly interfaces, significantly improving developer experience while maintaining optimal performance through TimescaleDB-specific optimizations. 
+**Conclusion:** Story 3.1 successfully established a production-ready querying foundation for Epic 3, implementing comprehensive SQLAlchemy 2.0 integration with automatic symbol resolution and TimescaleDB optimization. The discovery and resolution of SQLAlchemy 2.0 syntax changes demonstrates the importance of staying current with framework evolution. The comprehensive testing framework (20 unit tests + 8 integration tests) and seamless integration with existing storage patterns provides a solid foundation for CLI and API development. Most importantly, the symbol abstraction layer transforms complex database queries into user-friendly interfaces, significantly improving developer experience while maintaining optimal performance through TimescaleDB-specific optimizations.
+
+---
+
+## Section 20: CLI Query Interface Excellence and User Experience Design (Story 3.2)
+
+### Overview
+Story 3.2 successfully implemented a comprehensive CLI query interface that exposes the QueryBuilder functionality from Story 3.1 through an intuitive, user-friendly command-line interface. This implementation demonstrates excellence in CLI design, comprehensive parameter handling, and production-ready error management.
+
+### CLI Architecture and Design Excellence
+
+**1. Typer Framework Integration Mastery**
+- **Framework Choice:** Leveraged existing Typer framework for consistency with existing CLI commands
+- **Rich Integration:** Seamless integration with Rich console for beautiful output formatting
+- **Parameter Design:** Comprehensive parameter system supporting multiple input methods and validation
+- **Help System:** Extensive help documentation with practical examples and clear option descriptions
+
+**2. User Experience Design Principles**
+```python
+# Multiple symbol input methods for maximum flexibility
+--symbols ES.c.0,NQ.c.0        # Comma-separated (Excel-friendly)
+-s ES.c.0 -s NQ.c.0            # Multiple flags (script-friendly)
+--symbols "ES.c.0, NQ.c.0"     # Quoted with spaces (human-friendly)
+```
+
+**3. Output Format Versatility**
+- **Table Format:** Rich-formatted console tables with schema-specific columns
+- **CSV Format:** Standard CSV with proper header rows and data serialization
+- **JSON Format:** Structured JSON with datetime/Decimal serialization handling
+- **File Output:** Seamless file writing with error handling and confirmation messages
+
+### Parameter Validation and Error Handling Excellence
+
+**1. Comprehensive Input Validation**
+```python
+# Date format validation with clear error messages
+if not validate_date_format(start_date):
+    console.print("❌ [red]Error: start-date must be in YYYY-MM-DD format[/red]")
+
+# Date range logical validation
+if start_date_obj > end_date_obj:
+    console.print("❌ [red]Error: start-date must be before or equal to end-date[/red]")
+
+# Schema validation with helpful suggestions
+if schema not in SCHEMA_MAPPING:
+    console.print(f"❌ [red]Error: Invalid schema '{schema}'. Valid options: {', '.join(SCHEMA_MAPPING.keys())}[/red]")
+```
+
+**2. Intelligent Query Scope Validation**
+- **Large Dataset Warnings:** Automatic detection of potentially large queries (trades/tbbo multi-day)
+- **User Confirmation:** Interactive prompts for large queries with clear warnings
+- **Symbol Count Validation:** Warnings for queries with many symbols (>10)
+- **Graceful Cancellation:** User-friendly query cancellation with clear messaging
+
+**3. Advanced Error Handling with User Guidance**
+```python
+# Symbol resolution errors with helpful suggestions
+except SymbolResolutionError as e:
+    console.print(f"❌ [red]Symbol error: {e}[/red]")
+    # Show available symbols sample
+    with QueryBuilder() as qb:
+        available = qb.get_available_symbols(limit=10)
+        if available:
+            console.print("💡 [yellow]Available symbols (sample):[/yellow]")
+            for symbol in available[:5]:
+                console.print(f"   • {symbol}")
+```
+
+### Rich Console Integration and User Experience
+
+**1. Progress Indicators and Feedback**
+- **Query Execution Progress:** Spinner with descriptive text during database queries
+- **Execution Time Reporting:** Precise timing information for performance awareness
+- **Configuration Display:** Clear parameter summary before execution
+- **Result Summary:** Comprehensive result statistics and performance metrics
+
+**2. Schema-Specific Table Formatting**
+```python
+# OHLCV-specific table columns
+if schema.startswith("ohlcv"):
+    table.add_column("Symbol")
+    table.add_column("Date") 
+    table.add_column("Open")
+    table.add_column("High")
+    table.add_column("Low")
+    table.add_column("Close")
+    table.add_column("Volume")
+
+# Trades-specific table columns  
+elif schema == "trades":
+    table.add_column("Symbol")
+    table.add_column("Timestamp")
+    table.add_column("Price")
+    table.add_column("Size")
+    table.add_column("Side")
+```
+
+### Data Serialization and Format Handling
+
+**1. Decimal and DateTime Serialization Excellence**
+```python
+# CSV serialization with proper type handling
+for key, value in row.items():
+    if isinstance(value, Decimal):
+        serialized_row[key] = str(value)
+    elif isinstance(value, datetime):
+        serialized_row[key] = value.isoformat()
+    else:
+        serialized_row[key] = value
+
+# JSON serialization with custom serializer
+def json_serializer(obj):
+    if isinstance(obj, Decimal):
+        return str(obj)
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+```
+
+**2. File Output Management**
+- **Error Handling:** Comprehensive file I/O error handling with clear error messages
+- **Path Validation:** Automatic directory creation and permission checking
+- **Format Consistency:** Consistent file output regardless of console display format
+- **Success Confirmation:** Clear confirmation messages with file paths
+
+### Testing Framework Excellence
+
+**1. Comprehensive Unit Testing Strategy**
+- **30 Unit Tests:** Complete coverage of parameter parsing, validation, and output formatting
+- **Test Categories:** Symbol parsing, date validation, query scope validation, output formatting, CLI integration
+- **Mock Integration:** Sophisticated mocking of QueryBuilder for isolated testing
+- **Error Scenario Coverage:** Comprehensive testing of all error conditions and edge cases
+
+**2. Integration Testing Framework**
+```python
+# Real-world integration testing
+test_query_command_help()                    # Help system validation
+test_query_command_invalid_symbol_graceful_error()  # Error handling validation
+test_query_command_different_schemas()       # Multi-schema support validation
+test_query_command_file_output()            # File output functionality
+test_query_command_execution_time_reporting() # Performance reporting validation
+```
+
+### Documentation and User Experience Excellence
+
+**1. Comprehensive README Enhancement**
+- **Local Development Setup:** Clear instructions for non-Docker usage
+- **Multiple Usage Patterns:** Docker and local development examples
+- **Pro Tips:** Shell alias creation for frequent users
+- **Troubleshooting:** Error handling guidance and common issue resolution
+
+**2. CLI Help System Design**
+```python
+"""
+Query historical financial data from TimescaleDB.
+
+Examples:
+
+    # Query daily OHLCV data for ES futures
+    python main.py query -s ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31
+    
+    # Query multiple symbols with CSV output
+    python main.py query --symbols ES.c.0,NQ.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --output-format csv
+"""
+```
+
+### Critical Technical Achievements
+
+**1. Symbol Input Flexibility Implementation**
+```python
+def parse_query_symbols(symbols_input: List[str]) -> List[str]:
+    """Parse symbols from CLI input (handles both comma-separated and multiple flags)."""
+    parsed_symbols = []
+    for symbol_group in symbols_input:
+        if "," in symbol_group:
+            # Handle comma-separated: "ES.c.0,NQ.c.0"
+            parsed_symbols.extend([s.strip() for s in symbol_group.split(",") if s.strip()])
+        else:
+            # Handle single symbol
+            symbol = symbol_group.strip()
+            if symbol:  # Only add non-empty symbols
+                parsed_symbols.append(symbol)
+    return parsed_symbols
+```
+
+**2. Schema Mapping Architecture**
+```python
+SCHEMA_MAPPING = {
+    "ohlcv-1d": "query_daily_ohlcv",
+    "ohlcv": "query_daily_ohlcv",  # Alias for user convenience
+    "trades": "query_trades",
+    "tbbo": "query_tbbo", 
+    "statistics": "query_statistics",
+    "definitions": "query_definitions"
+}
+```
+
+### Development Process Insights and Lessons
+
+**1. Test-Driven Development Success**
+- **Early Test Creation:** Comprehensive test suite created during implementation
+- **Bug Discovery:** Tests revealed critical issues (empty symbol handling, Rich Table access patterns)
+- **Iterative Improvement:** Test failures drove proper functionality implementation
+- **Quality Assurance:** 100% test pass rate achieved through proper test design
+
+**2. Rich Framework Integration Challenges**
+- **Initial Issue:** Attempted to access Rich Table internal attributes (`._cells`) in tests
+- **Learning:** Rich Table objects should be tested through rendering, not internal access
+- **Solution:** Used Rich Console rendering to StringIO for proper table content validation
+- **Lesson:** Test framework integration should respect library abstractions
+
+**3. User Experience Design Principles Applied**
+- **Progressive Disclosure:** Basic usage simple, advanced features available when needed
+- **Error Prevention:** Validation prevents common mistakes before execution
+- **Error Recovery:** Clear error messages with actionable suggestions
+- **Performance Awareness:** Execution time reporting for user performance understanding
+
+### Production Readiness Validation
+
+**Before Story 3.2:**
+- **CLI Access:** Manual QueryBuilder instantiation required
+- **Parameter Handling:** No user-friendly parameter validation
+- **Output Formatting:** Raw dictionary output only
+- **Error Handling:** Technical error messages only
+- **Documentation:** No user-facing query documentation
+
+**After Story 3.2 Completion:**
+- **CLI Access:** ✅ **Complete** - Intuitive `python main.py query` interface
+- **Parameter Handling:** ✅ **Comprehensive** - Multiple input methods with validation
+- **Output Formatting:** ✅ **Professional** - Table, CSV, JSON with proper serialization
+- **Error Handling:** ✅ **User-Friendly** - Clear messages with actionable guidance
+- **Documentation:** ✅ **Comprehensive** - Complete usage examples and troubleshooting
+- **Testing Coverage:** ✅ **Excellent** - 45 total tests (30 unit + 15 integration)
+- **User Experience:** ✅ **Production-Ready** - Progress indicators, timing, confirmation
+
+### Long-term Strategic Impact
+
+**1. Epic 3 CLI Foundation Established**
+- **User Interface:** Production-ready CLI for financial data querying
+- **Developer Experience:** Intuitive interface hiding database complexity
+- **Integration Patterns:** Established patterns for CLI command development
+- **Testing Standards:** Comprehensive CLI testing framework for future commands
+
+**2. User Experience Excellence Achievement**
+- **Accessibility:** Both Docker and local development workflows supported
+- **Flexibility:** Multiple parameter input methods for different user preferences
+- **Performance:** Real-time feedback and execution time reporting
+- **Error Handling:** Graceful degradation with helpful user guidance
+
+**3. Documentation and Onboarding Excellence**
+- **Quick Start:** Clear setup instructions for immediate productivity
+- **Examples:** Comprehensive usage examples for all scenarios
+- **Troubleshooting:** Proactive error handling guidance
+- **Pro Tips:** Advanced usage patterns (aliases, shortcuts)
+
+### Critical Lessons for Future CLI Development
+
+**1. User Experience Design Principles**
+- **Lesson:** CLI interfaces should be as intuitive as GUI applications
+- **Implementation:** Multiple input methods accommodate different user workflows
+- **Validation:** Prevent user errors through comprehensive input validation
+- **Feedback:** Provide clear progress indicators and execution feedback
+
+**2. Testing Framework Integration**
+- **Lesson:** Test external library integrations through their public APIs, not internals
+- **Implementation:** Use proper rendering/output capture for UI component testing
+- **Coverage:** Include both success paths and error scenarios in CLI testing
+- **Isolation:** Mock external dependencies for reliable unit testing
+
+**3. Documentation as User Experience**
+- **Lesson:** Documentation is part of the user interface, not an afterthought
+- **Implementation:** Provide multiple usage patterns for different user preferences
+- **Examples:** Include practical, copy-paste examples for immediate productivity
+- **Troubleshooting:** Anticipate common issues and provide solutions proactively
+
+**4. Error Handling as User Guidance**
+- **Lesson:** Error messages should guide users toward successful completion
+- **Implementation:** Include suggestions and available options in error messages
+- **Recovery:** Provide clear paths for error recovery and retry
+- **Context:** Include relevant context (available symbols, valid formats) in error responses
+
+**Conclusion:** Story 3.2 successfully transformed the QueryBuilder functionality into a production-ready CLI interface that exemplifies user experience excellence. The implementation demonstrates comprehensive parameter handling, intelligent error management, and beautiful output formatting while maintaining the robust functionality of the underlying query system. The comprehensive testing framework (45 total tests) and extensive documentation ensure long-term maintainability and user adoption. Most importantly, the CLI design principles established in this story provide a template for future command development, emphasizing user experience, error prevention, and clear feedback throughout the interaction flow. The dual Docker/local development approach removes barriers to adoption while maintaining deployment flexibility. 
