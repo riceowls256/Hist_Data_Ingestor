@@ -978,4 +978,224 @@ test_jobs:
 - **Components:** Performance benchmarking, error handling, data integrity, idempotency
 - **Quality Gate:** Zero critical bugs and comprehensive scenario coverage mandatory
 
-**Conclusion:** Story 2.7 successfully identified and resolved a critical production bug while establishing a comprehensive E2E testing framework. The data format mismatch discovery demonstrates the critical importance of end-to-end validation in complex data pipelines. The comprehensive testing framework (database verification, idempotency testing, error handling validation) provides a solid foundation for production deployment and future data source integrations. Most importantly, the story established that pipeline "success" must be measured by actual data output, not just process completion - a lesson that prevents silent failures in production environments. 
+**Conclusion:** Story 2.7 successfully identified and resolved a critical production bug while establishing a comprehensive E2E testing framework. The data format mismatch discovery demonstrates the critical importance of end-to-end validation in complex data pipelines. The comprehensive testing framework (database verification, idempotency testing, error handling validation) provides a solid foundation for production deployment and future data source integrations. Most importantly, the story established that pipeline "success" must be measured by actual data output, not just process completion - a lesson that prevents silent failures in production environments.
+
+## 19. SQLAlchemy 2.0 Modern Syntax and QueryBuilder Architecture (Story 3.1)
+
+**Context:** Implemented comprehensive data querying capabilities with SQLAlchemy Core, creating a production-ready QueryBuilder for all TimescaleDB schemas with symbol resolution and performance optimization.
+
+### Critical SQLAlchemy 2.0 Syntax Discovery
+
+**Initial Implementation Challenge:**
+- **Error Encountered:** `ArgumentError: Column expression, FROM clause, or other columns clause element expected, got [Table(...)]`
+- **Root Cause:** Used deprecated SQLAlchemy 1.x syntax with list brackets in `select()` statements
+- **Impact:** 100% test failures due to syntax incompatibility
+
+**SQLAlchemy 2.0 Syntax Corrections Applied:**
+```python
+# ❌ OLD (SQLAlchemy 1.x) - Deprecated
+query = select([table])
+query = select([definitions_data.c.instrument_id, definitions_data.c.raw_symbol])
+
+# ✅ NEW (SQLAlchemy 2.0) - Modern
+query = select(table)
+query = select(definitions_data.c.instrument_id, definitions_data.c.raw_symbol)
+```
+
+**PostgreSQL TIMESTAMP Dialect Fix:**
+```python
+# ❌ Initial attempt
+from sqlalchemy.dialects.postgresql import TIMESTAMPTZ  # Import error
+
+# ✅ Correct approach
+from sqlalchemy.dialects.postgresql import TIMESTAMP as TIMESTAMPTZ
+Column('ts_event', TIMESTAMPTZ(timezone=True), nullable=False)
+```
+
+### QueryBuilder Architecture Excellence
+
+**1. Symbol Resolution Strategy Implementation**
+- **Challenge:** Database uses `instrument_id` (integer) but users query by `security_symbol` (string)
+- **Solution:** Automatic resolution via `definitions_data` table with comprehensive error handling
+- **Performance:** Optimized with IN clause for multiple symbols and proper index utilization
+- **Error Handling:** Graceful degradation for partial symbol matches with warning logs
+
+**2. Multi-Schema Query Support**
+```python
+# Comprehensive schema coverage implemented
+query_daily_ohlcv()    # OHLCV data with granularity filtering
+query_trades()         # Trade data with side filtering and volume limits
+query_tbbo()           # Top-of-book quote data
+query_statistics()     # Statistics data with stat_type filtering
+query_definitions()    # Instrument definitions with asset/exchange filtering
+```
+
+**3. TimescaleDB Performance Optimization**
+- **Index-Aware Query Construction:** Always filter by `instrument_id` first (primary key component)
+- **Hypertable Optimization:** Leverage time-based partitioning with `ts_event` range queries
+- **Query Order:** Use index-friendly ordering: `ORDER BY instrument_id, ts_event DESC`
+- **Connection Pooling:** SQLAlchemy engine with proper pool configuration
+
+### Testing Framework Architecture Success
+
+**1. Comprehensive Unit Testing Strategy**
+- **Test Coverage:** 20 test cases with 100% pass rate
+- **Mocking Strategy:** Complete database interaction mocking for isolated testing
+- **Error Scenarios:** Connection failures, symbol resolution errors, empty results
+- **Performance Testing:** Query construction validation and execution time monitoring
+
+**2. Integration Testing Framework**
+```python
+# Production-ready integration tests created
+test_database_connection()           # Basic connectivity validation
+test_get_available_symbols()        # Symbol discovery functionality
+test_query_with_nonexistent_symbol() # Error handling validation
+test_dataframe_conversion()         # Pandas integration testing
+test_query_performance_baseline()   # Performance benchmarking
+```
+
+### Critical Architecture Integration Patterns
+
+**1. Existing Storage Layer Compatibility**
+- **Connection Management:** Followed existing `TimescaleLoader` context manager pattern
+- **Environment Configuration:** Used same environment variables as storage layer
+- **Error Handling:** Integrated with existing `structlog` logging framework
+- **Database Schema:** Compatible with all existing table definitions and indexes
+
+**2. Data Format Standardization**
+```python
+# Standardized return format across all query methods
+[
+    {
+        'ts_event': datetime,
+        'instrument_id': int,
+        'symbol': str,  # Auto-resolved from definitions
+        'open_price': Decimal,
+        'high_price': Decimal,
+        # ... schema-specific fields
+    }
+]
+
+# Optional DataFrame conversion utility
+df = query_builder.to_dataframe(results)
+```
+
+### Performance and Scalability Insights
+
+**1. Query Optimization Patterns**
+- **Symbol Resolution Caching:** Efficient batch resolution for multiple symbols
+- **Result Set Management:** Configurable limits for high-volume data (trades, tbbo)
+- **Memory Efficiency:** Streaming-friendly architecture for large result sets
+- **Connection Reuse:** Proper connection pooling and context management
+
+**2. Error Handling Excellence**
+```python
+# Comprehensive exception hierarchy
+QueryingError (base)
+├── QueryExecutionError    # Database query failures
+├── SymbolResolutionError  # Symbol-to-ID mapping failures
+├── ConnectionError        # Database connectivity issues
+└── ValidationError        # Query parameter validation
+```
+
+### Development Process Improvements Identified
+
+**1. Modern Framework Research Strategy**
+- **Lesson:** Always verify current syntax patterns for rapidly evolving frameworks
+- **Tool:** Context7 integration proved valuable for real-time documentation access
+- **Process:** Check for breaking changes in major version upgrades (SQLAlchemy 1.x → 2.0)
+- **Documentation:** Capture modern patterns in code for future reference
+
+**2. Test-Driven Development Excellence**
+- **Pattern:** Write comprehensive tests early to catch syntax and logic issues
+- **Coverage:** Include both success paths and error scenarios in initial test design
+- **Integration:** Combine unit tests with integration tests for complete validation
+- **Performance:** Include performance baseline testing from the beginning
+
+**3. Architecture Integration Validation**
+- **Compatibility:** Verify new components follow existing architectural patterns
+- **Standards:** Maintain consistency with existing connection management and error handling
+- **Documentation:** Update architecture documents with new component integration
+
+### Critical Technical Discoveries
+
+**1. SQLAlchemy 2.0 Migration Patterns**
+- **Breaking Changes:** List bracket syntax removal in `select()` statements
+- **Import Changes:** Dialect-specific imports require aliasing for compatibility
+- **Type System:** Enhanced type checking requires explicit timezone specifications
+- **Performance:** Modern syntax provides better query optimization opportunities
+
+**2. TimescaleDB Query Optimization Requirements**
+- **Primary Key Utilization:** Always include `instrument_id` in WHERE clauses for index usage
+- **Time Range Optimization:** Use `ts_event` range queries to leverage hypertable partitioning
+- **Index Order:** Query ordering should match index definitions for optimal performance
+- **Batch Processing:** Consider result set sizes for memory-efficient processing
+
+**3. Symbol Resolution Architecture Patterns**
+- **Lookup Strategy:** JOIN approach vs caching strategy trade-offs
+- **Error Handling:** Graceful degradation for partial symbol matches
+- **Performance:** Batch resolution for multiple symbols more efficient than individual lookups
+- **Validation:** Symbol format validation prevents unnecessary database queries
+
+### Production Readiness Validation
+
+**Before Story 3.1:**
+- **Query Capabilities:** None - no data retrieval functionality
+- **Symbol Support:** Manual instrument_id lookup required
+- **Testing Coverage:** No querying test framework
+- **Integration:** No query layer integration with existing storage
+
+**After Story 3.1 Completion:**
+- **Query Capabilities:** ✅ **Complete** - All 5 schemas supported with comprehensive filtering
+- **Symbol Support:** ✅ **Automatic** - Transparent symbol-to-instrument_id resolution
+- **Testing Coverage:** ✅ **Comprehensive** - 20 unit tests + 8 integration tests (100% pass rate)
+- **Integration:** ✅ **Seamless** - Full compatibility with existing storage layer patterns
+- **Performance:** ✅ **Optimized** - Index-aware queries with TimescaleDB hypertable optimization
+- **Documentation:** ✅ **Complete** - Comprehensive API documentation and usage examples
+
+### Long-term Strategic Impact
+
+**1. Epic 3 Foundation Established**
+- **Query Infrastructure:** Production-ready foundation for CLI and API development
+- **Symbol Abstraction:** User-friendly symbol-based queries hide database complexity
+- **Performance Framework:** Optimized query patterns for high-volume financial data
+- **Testing Standards:** Comprehensive testing patterns for future query functionality
+
+**2. Architecture Maturity Achievement**
+- **Modern Framework Integration:** SQLAlchemy 2.0 best practices established
+- **Component Integration:** Seamless integration with existing storage and logging layers
+- **Error Handling Excellence:** Comprehensive exception hierarchy and graceful degradation
+- **Performance Optimization:** TimescaleDB-specific optimization patterns documented
+
+**3. Development Process Excellence**
+- **Framework Migration Patterns:** Established process for handling major version upgrades
+- **Testing Framework Maturity:** Comprehensive unit + integration testing standards
+- **Documentation Standards:** Complete API documentation and architectural integration guides
+
+### Critical Lessons for Future Development
+
+**1. Framework Version Management**
+- **Lesson:** Major version upgrades require comprehensive syntax validation
+- **Process:** Always test with latest framework versions during development
+- **Documentation:** Maintain version-specific syntax examples and migration guides
+- **Testing:** Include framework compatibility testing in CI/CD pipelines
+
+**2. Database Query Optimization Requirements**
+- **Lesson:** Time-series databases require specific query patterns for optimal performance
+- **Implementation:** Always design queries to leverage existing indexes and partitioning
+- **Monitoring:** Include query performance metrics in production monitoring
+- **Documentation:** Document optimal query patterns for team knowledge sharing
+
+**3. Component Integration Architecture**
+- **Lesson:** New components must seamlessly integrate with existing architectural patterns
+- **Standards:** Maintain consistency in connection management, error handling, and logging
+- **Testing:** Integration tests must verify compatibility with existing components
+- **Documentation:** Update architectural documentation with new component integration patterns
+
+**4. Symbol Abstraction Layer Value**
+- **Lesson:** User-friendly abstractions significantly improve developer experience
+- **Implementation:** Hide database complexity behind intuitive interfaces
+- **Error Handling:** Provide clear error messages for user-facing functionality
+- **Performance:** Optimize abstraction layers to minimize performance overhead
+
+**Conclusion:** Story 3.1 successfully established a production-ready querying foundation for Epic 3, implementing comprehensive SQLAlchemy 2.0 integration with automatic symbol resolution and TimescaleDB optimization. The discovery and resolution of SQLAlchemy 2.0 syntax changes demonstrates the importance of staying current with framework evolution. The comprehensive testing framework (20 unit tests + 8 integration tests) and seamless integration with existing storage patterns provides a solid foundation for CLI and API development. Most importantly, the symbol abstraction layer transforms complex database queries into user-friendly interfaces, significantly improving developer experience while maintaining optimal performance through TimescaleDB-specific optimizations. 
