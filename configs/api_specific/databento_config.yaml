@@ -1,0 +1,284 @@
+# Databento API Configuration
+# This file defines the configuration for connecting to and extracting data from the Databento API
+# Reference: https://docs.databento.com/
+
+# API Authentication Configuration
+api:
+  # Environment variable containing the Databento API key
+  # Set DATABENTO_API_KEY in your environment or .env file
+  key_env_var: "DATABENTO_API_KEY"
+  
+  # Base URL for Databento API (optional, uses default if not specified)
+  base_url: "https://hist.databento.com"
+  
+  # Default timeout for API requests (seconds)
+  timeout: 30
+
+# Data Extraction Jobs Configuration
+# Each job defines a specific data extraction task with dataset, schema, symbols, and date range
+jobs:
+  # OHLCV Jobs - Multiple granularities
+  - name: "ohlcv_1s"
+    dataset: "GLBX.MDP3"  # CME Globex dataset for futures
+    schema: "ohlcv-1s"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"  # Use continuous contracts
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 7  # Process in weekly chunks for performance
+    
+  - name: "ohlcv_1m"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1m"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 30  # Monthly chunks for minute data
+    
+  - name: "ohlcv_5m"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-5m"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 30
+    
+  - name: "ohlcv_15m"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-15m"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 30
+    
+  - name: "ohlcv_1h"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1h"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 90  # Quarterly chunks for hourly data
+    
+  - name: "ohlcv_1d"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 365  # Annual chunks for daily data
+    
+  # Trades Job
+  - name: "trades"
+    dataset: "GLBX.MDP3"
+    schema: "trades"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-12-01"  # Smaller date range for trades due to volume
+    end_date: "2023-12-31"
+    date_chunk_interval_days: 1  # Daily chunks for trades data
+    
+  # TBBO (Top of Book Bid/Offer) Job
+  - name: "tbbo"
+    dataset: "GLBX.MDP3"
+    schema: "tbbo"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-12-01"  # Smaller date range for TBBO due to volume
+    end_date: "2023-12-31"
+    date_chunk_interval_days: 1  # Daily chunks for TBBO data
+    
+  # Statistics Job
+  - name: "statistics"
+    dataset: "GLBX.MDP3"
+    schema: "statistics"
+    symbols: ["CL.FUT", "ES.FUT", "NG.FUT", "HO.FUT", "RB.FUT"]
+    stype_in: "continuous"
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 30  # Monthly chunks for statistics
+    
+  # Definition Schema Jobs - Instrument Metadata
+  - name: "definitions_es"
+    dataset: "GLBX.MDP3"
+    schema: "definition"
+    symbols: "ES.FUT"  # Use parent symbology for complete ES product family
+    stype_in: "parent"  # Parent symbology for efficient retrieval (14,743x faster)
+    start_date: "2024-12-01"
+    end_date: "2024-12-01"  # Single day for definition snapshot
+    date_chunk_interval_days: 1
+    
+  - name: "definitions_cl"
+    dataset: "GLBX.MDP3"
+    schema: "definition"
+    symbols: "CL.FUT"  # Crude Oil futures family
+    stype_in: "parent"
+    start_date: "2024-12-01"
+    end_date: "2024-12-01"
+    date_chunk_interval_days: 1
+    
+  - name: "definitions_ng"
+    dataset: "GLBX.MDP3"
+    schema: "definition"
+    symbols: "NG.FUT"  # Natural Gas futures family
+    stype_in: "parent"
+    start_date: "2024-12-01"
+    end_date: "2024-12-01"
+    date_chunk_interval_days: 1
+    
+  # Equity data job for SPY (alternative to ES futures)
+  - name: "spy_ohlcv_1d"
+    dataset: "XNAS.ITCH"  # NASDAQ dataset for equities
+    schema: "ohlcv-1d"
+    symbols: ["SPY"]
+    stype_in: "native"  # Use native symbol type for equities
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    date_chunk_interval_days: 365
+    
+  # End-to-End Test Jobs (Story 2.7) - Correct Symbol Formats
+  - name: "e2e_ohlcv_test"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["ES.c.0"]  # Correct continuous contract format
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-16"
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_trades_test"
+    dataset: "GLBX.MDP3"
+    schema: "trades"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"  # Single day for trades test
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_tbbo_test"
+    dataset: "GLBX.MDP3"
+    schema: "tbbo"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"
+    date_chunk_interval_days: 1
+    
+  - name: "e2e_statistics_test"
+    dataset: "GLBX.MDP3"
+    schema: "statistics"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-01"
+    end_date: "2024-01-31"
+    date_chunk_interval_days: 30
+
+# Retry Policy Configuration
+retry_policy:
+  # Maximum number of retry attempts for failed API calls
+  max_retries: 3
+  
+  # Base delay between retries (seconds)
+  base_delay: 1.0
+  
+  # Maximum delay between retries (seconds)
+  max_delay: 60.0
+  
+  # Exponential backoff multiplier
+  backoff_multiplier: 2.0
+  
+  # HTTP status codes that should trigger a retry
+  retry_on_status_codes: [429, 500, 502, 503, 504]
+  
+  # Respect Retry-After header from API responses
+  respect_retry_after: true
+
+# Data Transformation Configuration
+transformation:
+  # Path to the mapping configuration file for field transformations
+  mapping_config_path: "src/transformation/mapping_configs/databento_mappings.yaml"
+  
+  # Enable/disable specific transformations
+  enable_price_scaling: true
+  enable_timestamp_conversion: true
+  enable_symbol_normalization: true
+
+# Data Validation Configuration
+validation:
+  # Enable/disable validation system
+  strict_mode: true
+  quarantine_enabled: true
+  
+  # Validation severity levels: ERROR, WARNING, INFO
+  default_severity: "ERROR"
+  
+  # Quarantine settings
+  quarantine_base_dir: "dlq/validation_failures"
+  quarantine_retention_days: 30
+  
+  # Performance settings
+  batch_validation: true
+  max_validation_errors_per_batch: 100
+  validation_timeout_seconds: 30
+  
+  # Schema-specific validation rules
+  validation_rules:
+    ohlcv:
+      price_tolerance: 0.01  # Allow 1 cent tolerance for price comparisons
+      volume_max_limit: 1000000000  # Maximum reasonable volume
+      price_max_limit: 100000.0  # Maximum reasonable price
+      enable_cross_field_checks: true
+      
+    trades:
+      size_max_limit: 100000  # Maximum reasonable trade size
+      price_max_limit: 100000.0  # Maximum reasonable price
+      enable_timestamp_checks: true
+      valid_side_codes: ["A", "B", "N"]  # Aggressor, Bid, None
+      
+    tbbo:
+      spread_tolerance: 0.01  # Minimum bid-ask spread tolerance
+      size_max_limit: 1000000  # Maximum reasonable size
+      price_max_limit: 100000.0  # Maximum reasonable price
+      
+    statistics:
+      valid_stat_types: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # CME standard stat types
+      price_stat_types: [1, 2, 4, 5, 8, 9, 10]  # Stat types that should have positive values
+      
+    definition:
+      required_fields: ["symbol", "instrument_id", "ts_event"]
+      valid_instrument_classes: ["Future", "Option", "Spread", "Stock", "Index", "FX"]
+      symbol_pattern: "^[A-Z0-9._-]+$"  # Regex pattern for valid symbols
+  
+  # Monitoring and reporting
+  enable_validation_metrics: true
+  metrics_reporting_interval_seconds: 60
+  validation_report_path: "logs/validation_reports"
+
+# Output Configuration
+output:
+  # Batch size for processing records
+  batch_size: 1000
+  
+  # Enable parallel processing
+  enable_parallel_processing: true
+  
+  # Number of worker threads for parallel processing
+  worker_threads: 4
+  
+  # Enable compression for temporary files
+  enable_compression: true
+
+# Logging Configuration (API-specific)
+logging:
+  # Log level for Databento-specific operations
+  level: "INFO"
+  
+  # Enable detailed API request/response logging
+  log_api_requests: false
+  
+  # Enable performance metrics logging
+  log_performance_metrics: true

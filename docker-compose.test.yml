@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  timescaledb-test:
+    image: timescale/timescaledb:latest-pg15
+    container_name: hist_data_test_db
+    ports:
+      - "5433:5432"  # Use different port to avoid conflicts with production
+    environment:
+      POSTGRES_DB: hist_data_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      TIMESCALEDB_TELEMETRY: off
+    volumes:
+      - timescale_test_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d/  # Auto-run SQL scripts on startup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d hist_data_test"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - test_network
+
+  # Optional: PgAdmin for database management during testing
+  pgadmin-test:
+    image: dpage/pgadmin4:latest
+    container_name: hist_data_test_pgadmin
+    ports:
+      - "8081:80"  # Access via http://localhost:8081
+    environment:
+      PGADMIN_DEFAULT_EMAIL: test@example.com
+      PGADMIN_DEFAULT_PASSWORD: test_password
+      PGADMIN_DISABLE_POSTFIX: "true"
+    volumes:
+      - pgadmin_test_data:/var/lib/pgadmin
+    depends_on:
+      - timescaledb-test
+    networks:
+      - test_network
+    profiles:
+      - admin  # Only start with: docker-compose --profile admin up
+
+volumes:
+  timescale_test_data:
+    driver: local
+  pgadmin_test_data:
+    driver: local
+
+networks:
+  test_network:
+    driver: bridge 

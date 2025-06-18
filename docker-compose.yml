@@ -1,0 +1,40 @@
+services:
+  app:
+    build: .
+    container_name: hist_data_ingestor_app
+    env_file:
+      - .env
+    depends_on:
+      - timescaledb
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"  # Adjust if your app uses a different port
+    command: python hist_data_ingestor/main.py # Adjust as needed
+
+  timescaledb:
+    # Pinned to a specific version of TimescaleDB for PostgreSQL 14
+    image: timescale/timescaledb:2.14.2-pg14
+    container_name: timescaledb
+    environment:
+      POSTGRES_USER: ${TIMESCALEDB_USER:-postgres}
+      POSTGRES_PASSWORD: ${TIMESCALEDB_PASSWORD:-postgres}
+      POSTGRES_DB: ${TIMESCALEDB_DBNAME:-hist_data}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   container_name: pgadmin
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+  #     PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - timescaledb
+
+volumes:
+  timescale_data: 

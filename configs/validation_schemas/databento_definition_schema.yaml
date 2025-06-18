@@ -1,0 +1,551 @@
+# Databento Definition Schema Validation Configuration
+# This schema validates instrument definition records fetched from Databento
+# Based on the DatabentoDefinitionRecord model with 67 fields
+
+schema_name: "databento_definition"
+description: "Validation schema for Databento instrument definition records"
+version: "1.0"
+
+# Field Validation Rules
+fields:
+  # === HEADER FIELDS ===
+  ts_event:
+    type: "datetime"
+    required: true
+    description: "The matching-engine-received timestamp"
+    
+  ts_recv:
+    type: "datetime"
+    required: true
+    description: "The Databento gateway-received timestamp"
+    
+  rtype:
+    type: "integer"
+    required: true
+    description: "Record type sentinel value (always 19 for definitions)"
+    range:
+      min: 19
+      max: 19
+    
+  publisher_id:
+    type: "integer"
+    required: true
+    description: "Publisher ID assigned by Databento"
+    range:
+      min: 1
+    
+  instrument_id:
+    type: "integer"
+    required: true
+    description: "Numeric instrument ID"
+    range:
+      min: 1
+
+  # === CORE DEFINITION FIELDS ===
+  raw_symbol:
+    type: "string"
+    required: true
+    description: "Instrument name (symbol) provided by publisher"
+    max_length: 100
+    
+  security_update_action:
+    type: "string"
+    required: true
+    description: "Indicates if definition is Added, Modified, or Deleted"
+    allowed_values: ["A", "M", "D"]  # Added, Modified, Deleted
+    
+  instrument_class:
+    type: "string"
+    required: true
+    description: "Classification of the instrument"
+    allowed_values: ["FUT", "OPT", "SPREAD", "COMBO", "EQUITY", "INDEX", "CURRENCY"]
+    
+  min_price_increment:
+    type: "decimal"
+    required: true
+    description: "Minimum constant tick for the instrument"
+    range:
+      min: 0
+    
+  display_factor:
+    type: "decimal"
+    required: true
+    description: "Multiplier to convert display price to conventional price"
+    range:
+      min: 0
+    
+  expiration:
+    type: "datetime"
+    required: true
+    description: "Last eligible trade time"
+    
+  activation:
+    type: "datetime"
+    required: true
+    description: "Time of instrument activation"
+    
+  high_limit_price:
+    type: "decimal"
+    required: true
+    description: "Allowable high limit price for trading day"
+    
+  low_limit_price:
+    type: "decimal"
+    required: true
+    description: "Allowable low limit price for trading day"
+    
+  max_price_variation:
+    type: "decimal"
+    required: true
+    description: "Differential value for price banding"
+    range:
+      min: 0
+    
+  unit_of_measure_qty:
+    type: "decimal"
+    required: true
+    description: "Contract size for each instrument"
+    range:
+      min: 0
+    
+  min_price_increment_amount:
+    type: "decimal"
+    required: true
+    description: "Value currently under development by venue"
+    range:
+      min: 0
+    
+  price_ratio:
+    type: "decimal"
+    required: true
+    description: "Value used for price calculation in spread and leg pricing"
+    
+  inst_attrib_value:
+    type: "integer"
+    required: true
+    description: "Bitmap of instrument eligibility attributes"
+    range:
+      min: 0
+
+  # === OPTIONAL IDENTIFIERS ===
+  underlying_id:
+    type: "integer"
+    required: false
+    description: "Instrument ID of first underlying instrument"
+    range:
+      min: 1
+    
+  raw_instrument_id:
+    type: "integer"
+    required: false
+    description: "Instrument ID assigned by publisher"
+    range:
+      min: 1
+
+  # === MARKET DEPTH AND TRADING PARAMETERS ===
+  market_depth_implied:
+    type: "integer"
+    required: true
+    description: "Implied book depth on price level data feed"
+    range:
+      min: 0
+    
+  market_depth:
+    type: "integer"
+    required: true
+    description: "Outright book depth on price level data feed"
+    range:
+      min: 0
+    
+  market_segment_id:
+    type: "integer"
+    required: true
+    description: "Market segment of the instrument"
+    range:
+      min: 0
+    
+  max_trade_vol:
+    type: "integer"
+    required: true
+    description: "Maximum trading volume for the instrument"
+    range:
+      min: 0
+    
+  min_lot_size:
+    type: "integer"
+    required: true
+    description: "Minimum order entry quantity for the instrument"
+    range:
+      min: 0
+    
+  min_lot_size_block:
+    type: "integer"
+    required: true
+    description: "Minimum quantity required for a block trade"
+    range:
+      min: 0
+    
+  min_lot_size_round_lot:
+    type: "integer"
+    required: true
+    description: "Minimum quantity required for a round lot"
+    range:
+      min: 0
+    
+  min_trade_vol:
+    type: "integer"
+    required: true
+    description: "Minimum trading volume for the instrument"
+    range:
+      min: 0
+
+  # === CONTRACT DETAILS ===
+  contract_multiplier:
+    type: "integer"
+    required: false
+    description: "Number of deliverables per instrument"
+    range:
+      min: 1
+    
+  decay_quantity:
+    type: "integer"
+    required: false
+    description: "Quantity that a contract will decay daily"
+    range:
+      min: 0
+    
+  original_contract_size:
+    type: "integer"
+    required: false
+    description: "Fixed contract value assigned to each instrument"
+    range:
+      min: 0
+    
+  appl_id:
+    type: "integer"
+    required: false
+    description: "Channel ID assigned at the venue"
+    range:
+      min: 0
+    
+  maturity_year:
+    type: "integer"
+    required: false
+    description: "Calendar year reflected in instrument symbol"
+    range:
+      min: 2020
+      max: 2050
+    
+  decay_start_date:
+    type: "date"
+    required: false
+    description: "Date at which a contract will begin to decay"
+    
+  channel_id:
+    type: "integer"
+    required: true
+    description: "Channel ID assigned by Databento"
+    range:
+      min: 1
+
+  # === CURRENCY AND CLASSIFICATION ===
+  currency:
+    type: "string"
+    required: true
+    description: "Currency used for price fields"
+    allowed_values: ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
+    
+  settl_currency:
+    type: "string"
+    required: false
+    description: "Currency used for settlement"
+    allowed_values: ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
+    
+  secsubtype:
+    type: "string"
+    required: false
+    description: "Strategy type of the spread"
+    max_length: 50
+    
+  group:
+    type: "string"
+    required: true
+    description: "Security group code of the instrument"
+    max_length: 20
+    
+  exchange:
+    type: "string"
+    required: true
+    description: "Exchange used to identify the instrument"
+    allowed_values: ["GLBX", "XNAS", "XNYS", "XCME", "XCBT", "XNYM", "XCEC"]
+    
+  asset:
+    type: "string"
+    required: true
+    description: "Underlying asset code (product code)"
+    max_length: 20
+    
+  cfi:
+    type: "string"
+    required: false
+    description: "ISO standard instrument categorization code"
+    max_length: 6
+    pattern: "^[A-Z]{6}$"  # CFI codes are 6 uppercase letters
+    
+  security_type:
+    type: "string"
+    required: false
+    description: "Type of the instrument"
+    max_length: 50
+    
+  unit_of_measure:
+    type: "string"
+    required: false
+    description: "Unit of measure for instrument's original contract size"
+    max_length: 50
+    
+  underlying:
+    type: "string"
+    required: false
+    description: "Symbol of the first underlying instrument"
+    max_length: 100
+
+  # === OPTION-SPECIFIC FIELDS ===
+  strike_price_currency:
+    type: "string"
+    required: false
+    description: "Currency used for strike_price"
+    allowed_values: ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
+    
+  strike_price:
+    type: "decimal"
+    required: false
+    description: "Exercise price if the instrument is an option"
+    range:
+      min: 0
+
+  # === TRADING ALGORITHM AND DISPLAY ===
+  match_algorithm:
+    type: "string"
+    required: false
+    description: "Matching algorithm used for the instrument"
+    max_length: 50
+    
+  main_fraction:
+    type: "integer"
+    required: false
+    description: "Price denominator of the main fraction"
+    range:
+      min: 1
+    
+  price_display_format:
+    type: "integer"
+    required: false
+    description: "Number of digits to the right of the tick mark"
+    range:
+      min: 0
+      max: 8
+    
+  sub_fraction:
+    type: "integer"
+    required: false
+    description: "Price denominator of the sub fraction"
+    range:
+      min: 1
+    
+  underlying_product:
+    type: "integer"
+    required: false
+    description: "Product complex of the instrument"
+    range:
+      min: 0
+
+  # === MATURITY DETAILS ===
+  maturity_month:
+    type: "integer"
+    required: false
+    description: "Calendar month reflected in instrument symbol"
+    range:
+      min: 1
+      max: 12
+    
+  maturity_day:
+    type: "integer"
+    required: false
+    description: "Calendar day reflected in instrument symbol"
+    range:
+      min: 1
+      max: 31
+    
+  maturity_week:
+    type: "integer"
+    required: false
+    description: "Calendar week reflected in instrument symbol"
+    range:
+      min: 1
+      max: 53
+
+  # === MISCELLANEOUS ATTRIBUTES ===
+  user_defined_instrument:
+    type: "string"
+    required: false
+    description: "Indicates if the instrument is user defined"
+    allowed_values: ["Y", "N"]
+    
+  contract_multiplier_unit:
+    type: "integer"
+    required: false
+    description: "Type of contract_multiplier"
+    range:
+      min: 0
+    
+  flow_schedule_type:
+    type: "integer"
+    required: false
+    description: "Schedule for delivering electricity"
+    range:
+      min: 0
+    
+  tick_rule:
+    type: "integer"
+    required: false
+    description: "Tick rule of the spread"
+    range:
+      min: 0
+
+  # === LEG FIELDS FOR SPREADS/STRATEGIES ===
+  leg_count:
+    type: "integer"
+    required: true
+    description: "Number of legs in the strategy (0 for outrights)"
+    range:
+      min: 0
+      max: 10  # Reasonable upper limit
+    
+  leg_index:
+    type: "integer"
+    required: false
+    description: "0-based index of the leg"
+    range:
+      min: 0
+    
+  leg_instrument_id:
+    type: "integer"
+    required: false
+    description: "Numeric ID assigned to the leg instrument"
+    range:
+      min: 1
+    
+  leg_raw_symbol:
+    type: "string"
+    required: false
+    description: "Leg instrument's raw symbol"
+    max_length: 100
+    
+  leg_instrument_class:
+    type: "string"
+    required: false
+    description: "Leg instrument's classification"
+    allowed_values: ["FUT", "OPT", "SPREAD", "COMBO", "EQUITY", "INDEX", "CURRENCY"]
+    
+  leg_side:
+    type: "string"
+    required: false
+    description: "Side taken for the leg"
+    allowed_values: ["B", "S"]  # Buy, Sell
+    
+  leg_price:
+    type: "decimal"
+    required: false
+    description: "Tied price (if any) of the leg"
+    
+  leg_delta:
+    type: "decimal"
+    required: false
+    description: "Associated delta (if any) of the leg"
+    
+  leg_ratio_price_numerator:
+    type: "integer"
+    required: false
+    description: "Numerator of the price ratio of the leg"
+    range:
+      min: 1
+    
+  leg_ratio_price_denominator:
+    type: "integer"
+    required: false
+    description: "Denominator of the price ratio of the leg"
+    range:
+      min: 1
+    
+  leg_ratio_qty_numerator:
+    type: "integer"
+    required: false
+    description: "Numerator of the quantity ratio of the leg"
+    range:
+      min: 1
+    
+  leg_ratio_qty_denominator:
+    type: "integer"
+    required: false
+    description: "Denominator of the quantity ratio of the leg"
+    range:
+      min: 1
+    
+  leg_underlying_id:
+    type: "integer"
+    required: false
+    description: "Numeric ID of the leg instrument's underlying instrument"
+    range:
+      min: 1
+
+# Business Logic Validation Rules
+business_rules:
+  - name: "activation_before_expiration"
+    description: "Activation timestamp must be before expiration timestamp"
+    condition: "activation < expiration"
+    
+  - name: "price_limits_valid"
+    description: "High limit price must be greater than or equal to low limit price"
+    condition: "high_limit_price >= low_limit_price"
+    
+  - name: "leg_consistency"
+    description: "If leg_count > 0, then leg_index must be present"
+    condition: "leg_count == 0 OR leg_index IS NOT NULL"
+    
+  - name: "option_strike_price"
+    description: "If instrument_class is OPT, then strike_price should be present"
+    condition: "instrument_class != 'OPT' OR strike_price IS NOT NULL"
+    
+  - name: "decimal_precision"
+    description: "Price fields should have reasonable precision (max 8 decimal places)"
+    condition: "ALL price fields have <= 8 decimal places"
+
+# Data Quality Rules
+quality_rules:
+  - name: "symbol_format"
+    description: "Raw symbol should follow standard format patterns"
+    severity: "warning"
+    
+  - name: "future_dates"
+    description: "Expiration dates should be in the future for active contracts"
+    severity: "info"
+    
+  - name: "volume_limits"
+    description: "Trading volumes should be within reasonable ranges"
+    severity: "warning"
+
+# Performance Expectations (based on parent symbology testing)
+performance_benchmarks:
+  expected_record_count:
+    ES_futures: 41  # Based on recent testing
+    CL_futures: 40  # Estimated based on similar product
+    NG_futures: 35  # Estimated based on similar product
+  
+  retrieval_time:
+    target: "< 3 seconds"  # Based on 2.19s achievement
+    efficiency_gain: "14743x vs ALL_SYMBOLS"
+    
+  data_completeness:
+    required_fields: 100%  # All required fields must be present
+    optional_fields: "> 80%"  # Most optional fields should have data 

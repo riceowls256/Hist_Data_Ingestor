@@ -1,0 +1,254 @@
+# Databento End-to-End Test Configuration
+# This file defines test-specific job configurations for comprehensive pipeline validation
+# Designed for Story 2.7: Test End-to-End Databento Data Ingestion and Storage
+
+# API Authentication Configuration (same as production)
+api:
+  key_env_var: "DATABENTO_API_KEY"
+  base_url: "https://hist.databento.com"
+  timeout: 30
+
+# Test-Specific Data Extraction Jobs
+# Small, focused datasets designed for comprehensive pipeline testing
+test_jobs:
+  # Primary End-to-End Test - Multi-Schema Sample
+  e2e_small_sample:
+    dataset: "GLBX.MDP3"
+    schemas: ["ohlcv-1d", "trades", "tbbo", "statistics"]  # Multi-schema test
+    symbols: ["ES.c.0", "CL.c.0"]  # ES Futures + Crude Oil for diversity
+    stype_in: "continuous"
+    start_date: "2024-01-15"        # 2-day window for manageable data volume
+    end_date: "2024-01-16"
+    date_chunk_interval_days: 1
+    expected_volumes:
+      ohlcv-1d: 4    # 2 symbols × 2 days = 4 records
+      trades: 800000  # ~400K records per symbol per day
+      tbbo: 800000    # ~400K records per symbol per day
+      statistics: 40  # ~10-20 records per symbol per month
+    
+  # OHLCV-Specific Test (Low Volume, Quick Validation)
+  ohlcv_validation_test:
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-17"          # 3-day window
+    date_chunk_interval_days: 1
+    expected_volumes:
+      ohlcv-1d: 3    # 1 symbol × 3 days = 3 records
+    validation_rules:
+      - "high_price >= low_price"
+      - "high_price >= open_price"
+      - "high_price >= close_price"
+      - "volume > 0"
+      - "open_price > 0"
+      
+  # High-Volume Trades Test (Performance & Memory Validation)
+  trades_stress_test:
+    dataset: "GLBX.MDP3"
+    schema: "trades"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"          # Single day for 400K+ records
+    date_chunk_interval_days: 1
+    expected_volumes:
+      trades: 400000  # High volume for performance testing
+    performance_thresholds:
+      max_execution_time_seconds: 300
+      max_memory_usage_mb: 1024
+      min_insertion_rate_per_second: 1000
+      
+  # TBBO Quote Data Test
+  tbbo_quote_test:
+    dataset: "GLBX.MDP3"
+    schema: "tbbo"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"
+    date_chunk_interval_days: 1
+    expected_volumes:
+      tbbo: 400000
+    validation_rules:
+      - "bid_px_00 <= ask_px_00 OR (bid_px_00 IS NULL OR ask_px_00 IS NULL)"
+      - "bid_sz_00 > 0 OR bid_sz_00 IS NULL"
+      - "ask_sz_00 > 0 OR ask_sz_00 IS NULL"
+      
+  # Statistics Schema Test (Metadata Rich)
+  statistics_metadata_test:
+    dataset: "GLBX.MDP3"
+    schema: "statistics"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-01"
+    end_date: "2024-01-31"          # Monthly range for statistics
+    date_chunk_interval_days: 30
+    expected_volumes:
+      statistics: 20  # ~20 statistics records per month
+    validation_rules:
+      - "stat_type IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)"  # Valid CME stat types
+      - "price > 0 OR price IS NULL"
+      - "quantity >= 0 OR quantity IS NULL"
+      
+  # Definition Schema Test (Instrument Metadata)
+  definition_metadata_test:
+    dataset: "GLBX.MDP3"
+    schema: "definition"
+    symbols: "ES.FUT"  # Parent symbology for complete family
+    stype_in: "parent"
+    start_date: "2024-01-01"
+    end_date: "2024-01-31"          # Monthly definition snapshot
+    date_chunk_interval_days: 30
+    expected_volumes:
+      definition: 50  # ~50+ definition records for ES family
+    validation_rules:
+      - "min_price_increment > 0"
+      - "display_factor > 0"
+      - "expiration > activation"
+      - "raw_symbol IS NOT NULL"
+      - "instrument_class IS NOT NULL"
+      
+  # Idempotency Test (Exact Duplicate Data)
+  idempotency_validation_test:
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["ES.c.0"]
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"          # Single day for precise duplicate testing
+    date_chunk_interval_days: 1
+    expected_volumes:
+      ohlcv-1d: 1    # Single record for idempotency verification
+    test_iterations: 3   # Run same job 3 times to verify no duplicates
+    
+  # Error/Quarantine Test (Intentionally Invalid Data)
+  quarantine_validation_test:
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["INVALID.SYMBOL"]  # Non-existent symbol to trigger errors
+    stype_in: "continuous"
+    start_date: "2024-01-15"
+    end_date: "2024-01-15"
+    date_chunk_interval_days: 1
+    expected_volumes:
+      ohlcv-1d: 0     # Should return 0 records and trigger quarantine
+    expected_behavior: "quarantine"  # Expect this job to fail gracefully
+
+# Test-Specific Retry Policy (More Aggressive for Testing)
+test_retry_policy:
+  max_retries: 2                    # Reduced retries for faster test execution
+  base_delay: 0.5                   # Faster retries for testing
+  max_delay: 10.0                   # Lower max delay
+  backoff_multiplier: 2.0
+  retry_on_status_codes: [429, 500, 502, 503, 504]
+  respect_retry_after: true
+
+# Test-Specific Transformation Configuration
+test_transformation:
+  mapping_config_path: "src/transformation/mapping_configs/databento_mappings.yaml"
+  enable_price_scaling: true
+  enable_timestamp_conversion: true
+  enable_symbol_normalization: true
+  
+# Test-Specific Validation Configuration
+test_validation:
+  strict_mode: true
+  quarantine_enabled: true
+  default_severity: "ERROR"
+  
+  # Test-specific quarantine settings
+  quarantine_base_dir: "dlq/test_validation_failures"
+  quarantine_retention_days: 7     # Shorter retention for test data
+  
+  # Performance settings optimized for testing
+  batch_validation: true
+  max_validation_errors_per_batch: 50
+  validation_timeout_seconds: 15   # Shorter timeout for test scenarios
+  
+  # Comprehensive validation rules for testing
+  test_validation_rules:
+    ohlcv:
+      price_tolerance: 0.01
+      volume_max_limit: 1000000000
+      price_max_limit: 100000.0
+      enable_cross_field_checks: true
+      required_fields: ["ts_event", "instrument_id", "open_price", "high_price", "low_price", "close_price", "volume"]
+      business_rules:
+        - "high_price >= low_price"
+        - "high_price >= open_price"
+        - "high_price >= close_price"
+        - "volume >= 0"
+        - "open_price > 0"
+        - "high_price > 0"
+        - "low_price > 0"
+        - "close_price > 0"
+        
+    trades:
+      size_max_limit: 100000
+      price_max_limit: 100000.0
+      required_fields: ["ts_event", "instrument_id", "price", "size", "side"]
+      business_rules:
+        - "price > 0"
+        - "size > 0"
+        - "side IN ('B', 'S')"
+        
+    tbbo:
+      price_max_limit: 100000.0
+      size_max_limit: 100000
+      required_fields: ["ts_event", "instrument_id", "price", "size"]
+      business_rules:
+        - "price > 0"
+        - "size > 0"
+        - "bid_px_00 <= ask_px_00 OR (bid_px_00 IS NULL OR ask_px_00 IS NULL)"
+        - "bid_sz_00 > 0 OR bid_sz_00 IS NULL"
+        - "ask_sz_00 > 0 OR ask_sz_00 IS NULL"
+        
+    statistics:
+      required_fields: ["ts_event", "instrument_id", "stat_type", "sequence"]
+      business_rules:
+        - "stat_type BETWEEN 1 AND 10"  # Valid CME statistic types
+        - "sequence >= 0"
+        - "price > 0 OR price IS NULL"
+        - "quantity >= 0 OR quantity IS NULL"
+        
+    definition:
+      required_fields: ["ts_event", "instrument_id", "raw_symbol", "instrument_class", "min_price_increment", "expiration"]
+      business_rules:
+        - "min_price_increment > 0"
+        - "display_factor > 0"
+        - "expiration > activation"
+        - "unit_of_measure_qty > 0"
+        - "max_trade_vol >= 0"
+        - "min_lot_size >= 0"
+
+# Expected Performance Benchmarks for All Tests
+performance_benchmarks:
+  total_execution_time_limit: 300   # 5 minutes max for entire test suite
+  memory_peak_limit_mb: 1024        # 1GB memory limit
+  database_insertion_rate_min: 1000 # 1000 records/second minimum
+  api_fetch_rate_max: 30            # 30 seconds max for API data fetch
+  
+# Test Database Configuration
+test_database:
+  host_env_var: "TIMESCALEDB_TEST_HOST"
+  port_env_var: "TIMESCALEDB_TEST_PORT"  
+  database_env_var: "TIMESCALEDB_TEST_DB"
+  user_env_var: "TIMESCALEDB_TEST_USER"
+  password_env_var: "TIMESCALEDB_TEST_PASSWORD"
+  
+# Test Execution Metadata
+test_metadata:
+  story_reference: "Story 2.7"
+  epic_reference: "Epic 2"
+  test_purpose: "End-to-End Databento Pipeline Validation"
+  test_scope: "All 5 Databento schemas (OHLCV, Trades, TBBO, Statistics, Definition)"
+  expected_outcome: "Complete pipeline validation with zero unhandled errors"
+  success_criteria:
+    - "All test jobs execute without unhandled exceptions"
+    - "Data correctly stored in TimescaleDB with expected record counts"
+    - "Idempotency verified through multiple execution runs"
+    - "Quarantine system functional for invalid data"
+    - "Performance benchmarks met"
+    - "Complete logging and error handling validated" 

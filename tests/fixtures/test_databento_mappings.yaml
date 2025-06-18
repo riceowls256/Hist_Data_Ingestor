@@ -1,0 +1,147 @@
+# Test Databento Data Transformation Mapping Configuration
+# Simplified version for unit testing with known test cases
+
+version: "1.0-test"
+description: "Test field mappings for Databento Pydantic models (unit testing)"
+last_updated: "2024-06-13"
+
+# Simplified schema mappings for testing
+schema_mappings:
+  
+  # OHLCV Test Mapping
+  ohlcv-1d:
+    source_model: "DatabentoOHLCVRecord"
+    target_schema: "daily_ohlcv_data"
+    description: "Test OHLCV mapping"
+    
+    field_mappings:
+      ts_event: "ts_event"
+      instrument_id: "instrument_id"
+      open_price: "open_price"
+      high_price: "high_price"
+      low_price: "low_price"
+      close_price: "close_price"
+      volume: "volume"
+      vwap: "vwap"
+      trade_count: "trade_count"
+      
+    transformations:
+      price_validation:
+        fields: ["open_price", "high_price", "low_price", "close_price"]
+        rule: "value > 0"
+      ohlcv_integrity:
+        rule: "high_price >= low_price and high_price >= open_price and high_price >= close_price and low_price <= open_price and low_price <= close_price"
+      volume_validation:
+        fields: ["volume"]
+        rule: "value >= 0"
+        
+    defaults:
+      granularity: "1d"
+      data_source: "databento"
+  
+  # Trade Test Mapping  
+  trades:
+    source_model: "DatabentoTradeRecord"
+    target_schema: "trades_data"
+    description: "Test trade mapping"
+    
+    field_mappings:
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      instrument_id: "instrument_id"
+      price: "price"
+      size: "size"
+      side: "side"
+      
+    transformations:
+      price_validation:
+        fields: ["price"]
+        rule: "value > 0"
+      size_validation:
+        fields: ["size"]
+        rule: "value > 0"
+        
+    defaults:
+      publisher_id: 1
+      action: "T"
+      flags: 0
+      depth: 0
+
+  # TBBO Test Mapping
+  tbbo:
+    source_model: "DatabentoTBBORecord"
+    target_schema: "tbbo_data"
+    description: "Test TBBO mapping"
+    
+    field_mappings:
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      instrument_id: "instrument_id"
+      bid_px: "bid_px"
+      bid_sz: "bid_sz"
+      ask_px: "ask_px"
+      ask_sz: "ask_sz"
+      sequence: "sequence"
+      flags: "flags"
+      
+    transformations:
+      price_validation:
+        fields: ["bid_px", "ask_px"]
+        rule: "value is null or value > 0"
+      bid_ask_spread:
+        rule: "bid_px is null or ask_px is null or bid_px <= ask_px"
+        
+    defaults:
+      publisher_id: 1
+      action: "Q"
+      side: "N"
+      depth: 0
+
+  # Statistics Test Mapping
+  statistics:
+    source_model: "DatabentoStatisticsRecord"
+    target_schema: "statistics_data"
+    description: "Test statistics mapping"
+    
+    field_mappings:
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      instrument_id: "instrument_id"
+      stat_type: "stat_type"
+      stat_value: "price"
+      sequence: "sequence"
+      flags: "stat_flags"
+      
+    transformations:
+      stat_value_validation:
+        fields: ["price"]
+        rule: "value is null or value >= 0"
+        
+    defaults:
+      publisher_id: 1
+      ts_ref: "ts_event"
+      channel_id: 0
+      update_action: 1
+
+# Test conditional mappings
+conditional_mappings:
+  statistics:
+    stat_type_mappings:
+      1:  # Settlement price
+        primary_field: "settlement_price"
+        target_field: "price"
+      2:  # Open interest
+        primary_field: "open_interest" 
+        target_field: "quantity"
+      default:
+        primary_field: "stat_value"
+        target_field: "price"
+
+# Test global settings
+global_settings:
+  timezone_normalization: "UTC"
+  price_precision: 4  # Reduced precision for testing
+  quantity_precision: 0
+  skip_validation_errors: false
+  log_transformation_details: true
+  batch_size: 10  # Smaller batch for testing 

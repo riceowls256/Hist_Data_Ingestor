@@ -1,0 +1,17 @@
+# System configuration for Hist_Data_Ingestor
+
+db:
+  user: ""
+  password: ""
+  host: ""
+  port: 5432
+  dbname: ""
+
+logging:
+  level: "DEBUG"           # File logging level (comprehensive)
+  console_level: "WARNING" # Console logging level (user-facing only)
+  file: "logs/app.log"
+
+api:
+  ib_api_key: ""
+  databento_api_key: ""

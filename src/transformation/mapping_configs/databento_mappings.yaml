@@ -1,0 +1,396 @@
+# Databento Data Transformation Mapping Configuration
+# Maps Databento Pydantic model fields to standardized internal data model schemas
+
+# Mapping configuration metadata
+version: "1.0"
+description: "Field mappings for Databento Pydantic models to standardized internal schemas"
+last_updated: "2024-06-13"
+
+# Schema mappings for different Databento record types
+schema_mappings:
+  
+  # OHLCV Data Mapping
+  ohlcv-1d:
+    source_model: "DatabentoOHLCVRecord"
+    target_schema: "daily_ohlcv_data"
+    description: "Maps OHLCV bars to standardized daily OHLCV format"
+    
+    field_mappings:
+      # Timestamp fields - direct mappings
+      ts_event: "ts_event"
+      
+      # Symbol/Instrument identification
+      symbol: "symbol"
+      instrument_id: "instrument_id"
+      
+      # OHLCV price data - direct mappings (field names now match database)
+      open_price: "open_price"
+      high_price: "high_price"
+      low_price: "low_price"
+      close_price: "close_price"
+      volume: "volume"
+      
+      # Optional fields
+      vwap: "vwap"
+      trade_count: "trade_count"
+      
+    # Data transformations (applied after field mapping)
+    transformations:
+      # Ensure all prices are positive
+      price_validation:
+        fields: ["open_price", "high_price", "low_price", "close_price", "vwap"]
+        rule: "value > 0"
+        
+      # Ensure OHLCV bar integrity
+      ohlcv_integrity:
+        rule: "high_price >= low_price and high_price >= open_price and high_price >= close_price and low_price <= open_price and low_price <= close_price"
+        
+      # Ensure volume is non-negative
+      volume_validation:
+        fields: ["volume"]
+        rule: "value >= 0"
+        
+    # Default values for missing fields
+    defaults:
+      granularity: "1d"  # Default to daily OHLCV
+      data_source: "databento"
+  
+  # Trade Data Mapping  
+  trades:
+    source_model: "DatabentoTradeRecord"
+    target_schema: "trades_data"
+    description: "Maps individual trade records to standardized trade format"
+    
+    field_mappings:
+      # Timestamp fields
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      
+      # Symbol/Instrument identification
+      symbol: "symbol"
+      instrument_id: "instrument_id"
+      
+      # Trade execution data
+      price: "price"
+      size: "size"
+      
+      # Trade metadata
+      side: "side"
+      
+    # Data transformations
+    transformations:
+      # Ensure price is positive
+      price_validation:
+        fields: ["price"]
+        rule: "value > 0"
+        
+      # Ensure size is positive
+      size_validation:
+        fields: ["size"]
+        rule: "value > 0"
+        
+      # Normalize side values
+      side_normalization:
+        field: "side"
+        mappings:
+          "A": "A"  # Ask
+          "B": "B"  # Bid
+          "N": "N"  # None/Unknown
+          null: "N"
+          
+    # Default values
+    defaults:
+      publisher_id: 1
+      action: "T"  # Trade action
+      flags: 0
+      depth: 0
+      sequence: null
+      ts_in_delta: null
+
+  # TBBO (Top of Book) Data Mapping
+  tbbo:
+    source_model: "DatabentoTBBORecord"  
+    target_schema: "tbbo_data"
+    description: "Maps TBBO records to standardized top-of-book format"
+    
+    field_mappings:
+      # Timestamp fields
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      
+      # Symbol/Instrument identification
+      symbol: "symbol"
+      instrument_id: "instrument_id"
+      
+      # Bid data (extracted from levels[0] in adapter)
+      bid_px: "bid_px"
+      bid_sz: "bid_sz"
+      bid_ct: "bid_ct"
+      
+      # Ask/Offer data (extracted from levels[0] in adapter)
+      ask_px: "ask_px"
+      ask_sz: "ask_sz"
+      ask_ct: "ask_ct"
+      
+      # Metadata
+      sequence: "sequence"
+      flags: "flags"
+      
+    # Data transformations
+    transformations:
+      # Ensure bid/ask prices are positive when present
+      price_validation:
+        fields: ["bid_px_00", "ask_px_00"]
+        rule: "value is null or value > 0"
+        
+      # Ensure bid/ask sizes are non-negative when present  
+      size_validation:
+        fields: ["bid_sz_00", "ask_sz_00", "bid_ct_00", "ask_ct_00"]
+        rule: "value is null or value >= 0"
+        
+      # Ensure bid <= ask when both present
+      bid_ask_spread:
+        rule: "bid_px_00 is null or ask_px_00 is null or bid_px_00 <= ask_px_00"
+        
+    # Default values
+    defaults:
+      publisher_id: 1
+      price: null  # No trade price for TBBO
+      size: null   # No trade size for TBBO
+      action: "Q"  # Quote action
+      side: "N"    # No side for TBBO
+      depth: 0
+      ts_in_delta: null
+
+  # Statistics Data Mapping
+  statistics:
+    source_model: "DatabentoStatisticsRecord"
+    target_schema: "statistics_data"
+    description: "Maps statistics records to standardized statistics format"
+    
+    field_mappings:
+      # Timestamp fields
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      
+      # Symbol/Instrument identification
+      symbol: "symbol"
+      instrument_id: "instrument_id"
+      
+      # Statistical data
+      stat_type: "stat_type"
+      stat_value: "price"      # Map stat_value to price field
+      
+      # Metadata
+      sequence: "sequence"
+      flags: "stat_flags"
+      
+    # Data transformations
+    transformations:
+      # Validate statistical values are non-negative when present
+      stat_value_validation:
+        fields: ["price"]
+        rule: "value is null or value >= 0"
+        
+    # Default values
+    defaults:
+      publisher_id: 1
+      ts_ref: "ts_event"  # Use event timestamp as reference
+      channel_id: 0
+      update_action: 1
+      ts_in_delta: 0
+
+  # Definition Schema Data Mapping
+  definition:
+    source_model: "DatabentoDefinitionRecord"
+    target_schema: "instrument_definitions"
+    description: "Maps instrument definition records to standardized instrument metadata format"
+    
+    field_mappings:
+      # Header fields - direct mappings
+      ts_event: "ts_event"
+      ts_recv: "ts_recv"
+      rtype: "record_type"
+      publisher_id: "publisher_id"
+      instrument_id: "instrument_id"
+      
+      # Core definition fields
+      raw_symbol: "symbol"
+      security_update_action: "update_action"
+      instrument_class: "instrument_class"
+      min_price_increment: "tick_size"
+      display_factor: "display_factor"
+      expiration: "expiration_date"
+      activation: "activation_date"
+      high_limit_price: "high_limit_price"
+      low_limit_price: "low_limit_price"
+      max_price_variation: "max_price_variation"
+      unit_of_measure_qty: "contract_size"
+      min_price_increment_amount: "min_price_increment_amount"
+      price_ratio: "price_ratio"
+      inst_attrib_value: "instrument_attributes"
+      
+      # Optional identifiers
+      underlying_id: "underlying_instrument_id"
+      raw_instrument_id: "raw_instrument_id"
+      
+      # Market parameters
+      market_depth_implied: "market_depth_implied"
+      market_depth: "market_depth"
+      market_segment_id: "market_segment_id"
+      max_trade_vol: "max_trade_volume"
+      min_lot_size: "min_lot_size"
+      min_lot_size_block: "min_block_size"
+      min_lot_size_round_lot: "min_round_lot_size"
+      min_trade_vol: "min_trade_volume"
+      
+      # Contract details
+      contract_multiplier: "contract_multiplier"
+      decay_quantity: "decay_quantity"
+      original_contract_size: "original_contract_size"
+      appl_id: "application_id"
+      maturity_year: "maturity_year"
+      decay_start_date: "decay_start_date"
+      channel_id: "channel_id"
+      
+      # Currency and classification
+      currency: "currency"
+      settl_currency: "settlement_currency"
+      secsubtype: "security_subtype"
+      group: "security_group"
+      exchange: "exchange"
+      asset: "underlying_asset"
+      cfi: "cfi_code"
+      security_type: "security_type"
+      unit_of_measure: "unit_of_measure"
+      underlying: "underlying_symbol"
+      
+      # Option-specific fields
+      strike_price_currency: "strike_currency"
+      strike_price: "strike_price"
+      
+      # Trading algorithm and display
+      match_algorithm: "matching_algorithm"
+      main_fraction: "main_fraction"
+      price_display_format: "price_display_format"
+      sub_fraction: "sub_fraction"
+      underlying_product: "underlying_product_code"
+      
+      # Maturity details
+      maturity_month: "maturity_month"
+      maturity_day: "maturity_day"
+      maturity_week: "maturity_week"
+      
+      # Miscellaneous attributes
+      user_defined_instrument: "is_user_defined"
+      contract_multiplier_unit: "contract_multiplier_unit"
+      flow_schedule_type: "flow_schedule_type"
+      tick_rule: "tick_rule"
+      
+      # Leg fields for spreads/strategies
+      leg_count: "leg_count"
+      leg_index: "leg_index"
+      leg_instrument_id: "leg_instrument_id"
+      leg_raw_symbol: "leg_symbol"
+      leg_instrument_class: "leg_instrument_class"
+      leg_side: "leg_side"
+      leg_price: "leg_price"
+      leg_delta: "leg_delta"
+      leg_ratio_price_numerator: "leg_price_ratio_num"
+      leg_ratio_price_denominator: "leg_price_ratio_den"
+      leg_ratio_qty_numerator: "leg_qty_ratio_num"
+      leg_ratio_qty_denominator: "leg_qty_ratio_den"
+      leg_underlying_id: "leg_underlying_id"
+      
+    # Data transformations for definition records
+    transformations:
+      # Ensure activation comes before expiration
+      date_sequence_validation:
+        rule: "activation_date <= expiration_date"
+        
+      # Ensure price limits are logical
+      price_limit_validation:
+        rule: "high_limit_price >= low_limit_price"
+        
+      # Ensure tick size is positive
+      tick_size_validation:
+        fields: ["tick_size"]
+        rule: "value > 0"
+        
+      # Ensure contract size is positive
+      contract_size_validation:
+        fields: ["contract_size"]
+        rule: "value > 0"
+        
+      # Normalize update action values
+      update_action_normalization:
+        field: "update_action"
+        mappings:
+          "A": "ADDED"
+          "M": "MODIFIED" 
+          "D": "DELETED"
+          
+      # Normalize instrument class values
+      instrument_class_normalization:
+        field: "instrument_class"
+        mappings:
+          "FUT": "FUTURE"
+          "OPT": "OPTION"
+          "SPREAD": "SPREAD"
+          "COMBO": "COMBINATION"
+          "EQUITY": "EQUITY"
+          "INDEX": "INDEX"
+          "CURRENCY": "CURRENCY"
+          
+      # Validate leg count consistency
+      leg_count_validation:
+        rule: "leg_count == 0 OR (leg_index IS NOT NULL AND leg_instrument_id IS NOT NULL)"
+        
+      # Ensure option instruments have strike prices
+      option_strike_validation:
+        rule: "instrument_class != 'OPTION' OR strike_price IS NOT NULL"
+        
+    # Default values for definition records
+    defaults:
+      data_source: "databento"
+      record_status: "ACTIVE"
+      created_timestamp: "CURRENT_TIMESTAMP"
+      last_updated: "CURRENT_TIMESTAMP"
+
+# Configuration for conditional field mappings based on stat_type
+conditional_mappings:
+  statistics:
+    # Map different stat_types to appropriate fields
+    stat_type_mappings:
+      1:  # Settlement price
+        primary_field: "settlement_price"
+        target_field: "price"
+      2:  # Open interest  
+        primary_field: "open_interest"
+        target_field: "quantity"
+      3:  # High limit
+        primary_field: "high_limit"
+        target_field: "price"
+      4:  # Low limit
+        primary_field: "low_limit"
+        target_field: "price"
+      default:
+        primary_field: "stat_value"
+        target_field: "price"
+
+# Global transformation settings
+global_settings:
+  # Timezone handling
+  timezone_normalization: "UTC"
+  
+  # Decimal precision for financial data
+  price_precision: 8
+  quantity_precision: 0
+  
+  # Error handling preferences
+  skip_validation_errors: false
+  log_transformation_details: true
+  
+  # Performance settings
+  batch_size: 1000
+  enable_parallel_processing: false

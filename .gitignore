@@ -1,0 +1,52 @@
+# Ignore environment variable files
+.env
+.env.test
+
+# Add logs/ to the .gitignore file to prevent log files from being committed to the repository.
+logs/ 
+
+# Python build artifacts
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# VSCode settings
+.vscode/
+
+# Test cache
+.pytest_cache/
+
+# Ignore virtual environments
+venv/ 
+
+# OS-specific
+.DS_Store
+
+# IDE & Editor files
+.claude/
+.cursor/
+.cursorrules
+
+#BMAD IDE
+.bmad-core
+
+
+
+# Logs
+logs/*.log
+!logs/.gitkeep 
+
+# Data files - CSV exports and test data
+*.csv
+tests/hist_api/*.csv
+data_temp/
+dlq/
+
+# Large data files
+tests/hist_api/all_symbols_*.csv
+tests/hist_api/es_symbols_discovered.csv 
+# Generated context files
+project_context*.txt
+project_context_trimmed.txt

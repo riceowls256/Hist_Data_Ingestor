@@ -1,0 +1,20 @@
+pydantic>=2.0
+pydantic-settings>=2.0
+sqlalchemy
+typer
+rich
+pytest
+structlog
+pandas
+numpy<2.0  # Pin to 1.x for compatibility with compiled dependencies
+aiohttp
+psycopg2-binary
+tenacity
+docker
+python-dotenv
+pandera
+pyyaml
+databento
+matplotlib
+psutil
+pathspec
