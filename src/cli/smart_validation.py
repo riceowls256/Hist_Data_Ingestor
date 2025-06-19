@@ -22,8 +22,10 @@ from rich.prompt import Prompt, Confirm, IntPrompt
 from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
+from src.utils.custom_logger import get_logger
 
 console = Console()
+logger = get_logger(__name__)
 
 
 class ValidationLevel(Enum):
@@ -60,6 +62,8 @@ class SymbolCache:
         Args:
             cache_file: Optional file to persist symbol data
         """
+        logger.debug("symbol_cache_init_started", cache_file=str(cache_file) if cache_file else None)
+        
         self.cache_file = cache_file or Path.home() / ".hdi_symbol_cache.json"
         self.symbols: Set[str] = set()
         self.symbol_metadata: Dict[str, Dict[str, Any]] = {}
@@ -70,22 +74,41 @@ class SymbolCache:
         
         # Initialize with common symbols if cache is empty
         if not self.symbols:
+            logger.debug("symbol_cache_empty_initializing_defaults")
             self._initialize_default_symbols()
+            
+        logger.debug("symbol_cache_init_completed", 
+                     cache_file=str(self.cache_file),
+                     symbol_count=len(self.symbols),
+                     metadata_count=len(self.symbol_metadata))
             
     def _load_cache(self):
         """Load symbol cache from disk."""
         if self.cache_file.exists():
+            logger.debug("symbol_cache_loading_started", cache_file=str(self.cache_file))
             try:
                 with open(self.cache_file, 'r') as f:
                     data = json.load(f)
                     self.symbols = set(data.get('symbols', []))
                     self.symbol_metadata = data.get('metadata', {})
-            except Exception:
+                
+                logger.debug("symbol_cache_loading_completed", 
+                             symbol_count=len(self.symbols),
+                             metadata_count=len(self.symbol_metadata))
+            except Exception as e:
                 # If loading fails, start fresh
-                pass
+                logger.warning("symbol_cache_loading_failed", 
+                               cache_file=str(self.cache_file),
+                               error=str(e),
+                               error_type=type(e).__name__)
+        else:
+            logger.debug("symbol_cache_file_not_found", cache_file=str(self.cache_file))
                 
     def _save_cache(self):
         """Save symbol cache to disk."""
+        logger.debug("symbol_cache_save_started", 
+                     cache_file=str(self.cache_file),
+                     symbol_count=len(self.symbols))
         try:
             data = {
                 'symbols': list(self.symbols),
@@ -94,9 +117,14 @@ class SymbolCache:
             }
             with open(self.cache_file, 'w') as f:
                 json.dump(data, f, indent=2)
-        except Exception:
+            
+            logger.debug("symbol_cache_save_completed", cache_file=str(self.cache_file))
+        except Exception as e:
             # Don't fail if we can't save cache
-            pass
+            logger.warning("symbol_cache_save_failed", 
+                           cache_file=str(self.cache_file),
+                           error=str(e),
+                           error_type=type(e).__name__)
             
     def _initialize_default_symbols(self):
         """Initialize with common trading symbols."""
@@ -736,7 +764,12 @@ class SmartValidator:
         Returns:
             ValidationResult with suggestions
         """
+        logger.debug("symbol_validation_started", 
+                     symbol_input=symbol_input, 
+                     interactive=interactive)
+        
         if not symbol_input or not symbol_input.strip():
+            logger.debug("symbol_validation_failed", reason="empty_input")
             return ValidationResult(
                 is_valid=False,
                 level=ValidationLevel.ERROR,
@@ -749,6 +782,10 @@ class SmartValidator:
         # Check for exact match
         if self.symbol_cache.is_valid_symbol(symbol_input):
             symbol_info = self.symbol_cache.get_symbol_info(symbol_input)
+            logger.debug("symbol_validation_completed", 
+                         symbol=symbol_input, 
+                         is_valid=True, 
+                         validation_type="exact_match")
             return ValidationResult(
                 is_valid=True,
                 level=ValidationLevel.SUCCESS,
@@ -759,7 +796,15 @@ class SmartValidator:
         # Find suggestions
         suggestions = self.symbol_cache.fuzzy_search(symbol_input, limit=5)
         
+        logger.debug("symbol_fuzzy_search_completed", 
+                     symbol_input=symbol_input,
+                     suggestion_count=len(suggestions))
+        
         if not suggestions:
+            logger.debug("symbol_validation_completed", 
+                         symbol=symbol_input, 
+                         is_valid=False, 
+                         validation_type="no_suggestions")
             return ValidationResult(
                 is_valid=False,
                 level=ValidationLevel.ERROR,
@@ -772,8 +817,16 @@ class SmartValidator:
         
         if interactive and suggestions:
             # Show interactive selection
+            logger.debug("symbol_validation_interactive_selection_started", 
+                         symbol=symbol_input,
+                         suggestion_count=len(suggestion_list))
             return self._interactive_symbol_selection(symbol_input, suggestion_list)
         else:
+            logger.debug("symbol_validation_completed", 
+                         symbol=symbol_input, 
+                         is_valid=False, 
+                         validation_type="suggestions_provided",
+                         suggestion_count=len(suggestion_list))
             return ValidationResult(
                 is_valid=False,
                 level=ValidationLevel.WARNING,

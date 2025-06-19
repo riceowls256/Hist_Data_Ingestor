@@ -24,8 +24,10 @@ from rich.tree import Tree
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from .smart_validation import SmartValidator, ValidationResult, ValidationLevel
+from src.utils.custom_logger import get_logger
 
 console = Console()
+logger = get_logger(__name__)
 
 
 class WorkflowType(Enum):
@@ -110,6 +112,10 @@ class WorkflowBuilder:
             templates_dir: Directory for workflow templates
             workflows_dir: Directory for saved workflows
         """
+        logger.info("workflow_builder_init_started", 
+                    templates_dir=str(templates_dir) if templates_dir else None,
+                    workflows_dir=str(workflows_dir) if workflows_dir else None)
+        
         self.validator = validator or SmartValidator()
         self.templates_dir = templates_dir or Path.home() / ".hdi_workflow_templates"
         self.workflows_dir = workflows_dir or Path.home() / ".hdi_workflows"
@@ -117,12 +123,21 @@ class WorkflowBuilder:
         # Ensure directories exist
         self.templates_dir.mkdir(exist_ok=True)
         self.workflows_dir.mkdir(exist_ok=True)
+        logger.debug("workflow_directories_created", 
+                     templates_dir=str(self.templates_dir),
+                     workflows_dir=str(self.workflows_dir))
         
         # Load built-in templates
         self.templates = self._load_builtin_templates()
+        logger.debug("builtin_templates_loaded", template_count=len(self.templates))
         
         # Load custom templates
         self._load_custom_templates()
+        
+        logger.info("workflow_builder_init_completed", 
+                    total_templates=len(self.templates),
+                    templates_dir=str(self.templates_dir),
+                    workflows_dir=str(self.workflows_dir))
         
     def build_workflow(self, workflow_type: Optional[WorkflowType] = None) -> Optional[Workflow]:
         """Build a workflow interactively.
@@ -133,6 +148,7 @@ class WorkflowBuilder:
         Returns:
             Created workflow or None if cancelled
         """
+        logger.info("workflow_build_started", workflow_type=workflow_type.value if workflow_type else None)
         console.print("\n🔧 [bold cyan]Interactive Workflow Builder[/bold cyan]\n")
         
         try:
@@ -140,15 +156,24 @@ class WorkflowBuilder:
             if workflow_type is None:
                 workflow_type = self._select_workflow_type()
                 if workflow_type is None:
+                    logger.info("workflow_build_cancelled", step="type_selection")
                     return None
+                logger.debug("workflow_type_selected", workflow_type=workflow_type.value)
                     
             # Step 2: Choose template or start from scratch
             template = self._select_template(workflow_type)
+            logger.debug("template_selected", 
+                         template_name=template.name if template else "custom",
+                         template_id=template.id if template else None)
             
             # Step 3: Configure workflow
             workflow = self._configure_workflow(workflow_type, template)
             if workflow is None:
+                logger.info("workflow_build_cancelled", step="configuration")
                 return None
+            logger.debug("workflow_configured", 
+                         workflow_name=workflow.name,
+                         step_count=len(workflow.steps))
                 
             # Step 4: Review and confirm
             if self._review_workflow(workflow):
@@ -158,14 +183,22 @@ class WorkflowBuilder:
                     workflow.name = workflow_name
                     self._save_workflow(workflow)
                     console.print(f"✅ Workflow saved as '{workflow_name}'")
-                    
+                    logger.info("workflow_saved", workflow_name=workflow_name, workflow_id=workflow.id)
+                
+                logger.info("workflow_build_completed", 
+                            workflow_name=workflow.name,
+                            workflow_type=workflow.workflow_type.value,
+                            step_count=len(workflow.steps),
+                            saved=True)
                 return workflow
             else:
                 console.print("❌ Workflow creation cancelled")
+                logger.info("workflow_build_cancelled", step="review")
                 return None
                 
         except (KeyboardInterrupt, EOFError):
             console.print("\n⏹️  Workflow creation cancelled by user")
+            logger.info("workflow_build_cancelled", reason="user_interrupt")
             return None
             
     def _select_workflow_type(self) -> Optional[WorkflowType]:
@@ -174,6 +207,8 @@ class WorkflowBuilder:
         Returns:
             Selected workflow type or None if cancelled
         """
+        logger.debug("workflow_type_selection_started")
+        
         options = [
             ("1", "Full Historical Backfill", WorkflowType.BACKFILL, 
              "Comprehensive historical data ingestion for multiple symbols"),
@@ -205,8 +240,13 @@ class WorkflowBuilder:
                 choices=["1", "2", "3", "4", "5"],
                 default=1
             )
-            return options[choice - 1][2]
+            selected_type = options[choice - 1][2]
+            logger.debug("workflow_type_selection_completed", 
+                         choice=choice, 
+                         selected_type=selected_type.value)
+            return selected_type
         except (KeyboardInterrupt, EOFError):
+            logger.debug("workflow_type_selection_cancelled")
             return None
             
     def _select_template(self, workflow_type: WorkflowType) -> Optional[WorkflowTemplate]:
@@ -218,8 +258,13 @@ class WorkflowBuilder:
         Returns:
             Selected template or None for custom
         """
+        logger.debug("template_selection_started", workflow_type=workflow_type.value)
+        
         # Filter templates by type
         available_templates = [t for t in self.templates if t.workflow_type == workflow_type]
+        logger.debug("templates_filtered", 
+                     workflow_type=workflow_type.value,
+                     available_count=len(available_templates))
         
         if not available_templates:
             console.print(f"ℹ️  No templates available for {workflow_type.value}. Starting from scratch.")
@@ -248,11 +293,17 @@ class WorkflowBuilder:
             )
             
             if choice == 0:
+                logger.debug("template_selection_completed", selected="custom")
                 return None
             else:
-                return available_templates[choice - 1]
+                selected_template = available_templates[choice - 1]
+                logger.debug("template_selection_completed", 
+                             selected_template=selected_template.name,
+                             template_id=selected_template.id)
+                return selected_template
                 
         except (KeyboardInterrupt, EOFError):
+            logger.debug("template_selection_cancelled")
             return None
             
     def _configure_workflow(self, workflow_type: WorkflowType, 
@@ -266,6 +317,10 @@ class WorkflowBuilder:
         Returns:
             Configured workflow or None if cancelled
         """
+        logger.info("workflow_configuration_started", 
+                    workflow_type=workflow_type.value,
+                    using_template=template.name if template else None)
+        
         console.print(f"\n⚙️  [cyan]Configuring {workflow_type.value} workflow[/cyan]\n")
         
         # Basic workflow info
@@ -278,8 +333,9 @@ class WorkflowBuilder:
         )
         
         # Create workflow
+        workflow_id = str(uuid.uuid4())
         workflow = Workflow(
-            id=str(uuid.uuid4()),
+            id=workflow_id,
             name=workflow_name,
             description=workflow_description,
             workflow_type=workflow_type,
@@ -288,17 +344,34 @@ class WorkflowBuilder:
             updated_at=datetime.now()
         )
         
+        logger.debug("workflow_object_created", 
+                     workflow_id=workflow_id,
+                     workflow_name=workflow_name,
+                     workflow_type=workflow_type.value)
+        
         # Configure based on type
+        logger.debug("workflow_type_specific_configuration_started", workflow_type=workflow_type.value)
+        
         if workflow_type == WorkflowType.BACKFILL:
-            return self._configure_backfill_workflow(workflow, template)
+            result = self._configure_backfill_workflow(workflow, template)
         elif workflow_type == WorkflowType.DAILY_UPDATE:
-            return self._configure_daily_update_workflow(workflow, template)
+            result = self._configure_daily_update_workflow(workflow, template)
         elif workflow_type == WorkflowType.MULTI_SYMBOL:
-            return self._configure_multi_symbol_workflow(workflow, template)
+            result = self._configure_multi_symbol_workflow(workflow, template)
         elif workflow_type == WorkflowType.DATA_QUALITY:
-            return self._configure_data_quality_workflow(workflow, template)
+            result = self._configure_data_quality_workflow(workflow, template)
         else:  # CUSTOM
-            return self._configure_custom_workflow(workflow, template)
+            result = self._configure_custom_workflow(workflow, template)
+            
+        if result:
+            logger.info("workflow_configuration_completed", 
+                        workflow_type=workflow_type.value,
+                        step_count=len(result.steps),
+                        workflow_name=result.name)
+        else:
+            logger.info("workflow_configuration_cancelled", workflow_type=workflow_type.value)
+            
+        return result
             
     def _configure_backfill_workflow(self, workflow: Workflow, 
                                    template: Optional[WorkflowTemplate]) -> Optional[Workflow]:
@@ -311,6 +384,7 @@ class WorkflowBuilder:
         Returns:
             Configured workflow or None if cancelled
         """
+        logger.info("backfill_workflow_configuration_started", workflow_id=workflow.id)
         console.print("📈 [green]Configuring Historical Backfill[/green]")
         
         # Symbol selection with validation
@@ -322,7 +396,12 @@ class WorkflowBuilder:
         symbol_validation = self.validator.validate_symbol_list(symbols_input, interactive=True)
         self.validator.show_validation_result(symbol_validation, "Symbol Validation")
         
+        logger.debug("symbol_validation_completed", 
+                     symbols_input=symbols_input,
+                     is_valid=symbol_validation.is_valid)
+        
         if not symbol_validation.is_valid and not Confirm.ask("Continue with invalid symbols?"):
+            logger.info("backfill_workflow_configuration_cancelled", reason="invalid_symbols")
             return None
             
         # Date range selection with market calendar
@@ -340,7 +419,13 @@ class WorkflowBuilder:
         )
         self.validator.show_validation_result(date_validation, "Date Range Validation")
         
+        logger.debug("date_validation_completed", 
+                     start_date=start_date_str,
+                     end_date=end_date_str,
+                     is_valid=date_validation.is_valid)
+        
         if not date_validation.is_valid and not Confirm.ask("Continue with invalid dates?"):
+            logger.info("backfill_workflow_configuration_cancelled", reason="invalid_dates")
             return None
             
         # Schema selection
@@ -404,6 +489,15 @@ class WorkflowBuilder:
         ]
         
         workflow.steps = steps
+        
+        logger.info("backfill_workflow_configuration_completed", 
+                    workflow_id=workflow.id,
+                    symbol_count=len(symbols_input.split(',')),
+                    batch_size=batch_size,
+                    schema=schema_input,
+                    date_range=f"{start_date_str} to {end_date_str}",
+                    step_count=len(steps))
+        
         return workflow
         
     def _configure_daily_update_workflow(self, workflow: Workflow,
@@ -891,6 +985,10 @@ class WorkflowBuilder:
         Args:
             workflow: Workflow to save
         """
+        logger.info("workflow_save_started", 
+                    workflow_id=workflow.id,
+                    workflow_name=workflow.name)
+        
         workflow_file = self.workflows_dir / f"{workflow.id}.json"
         
         # Convert to serializable format
@@ -918,8 +1016,18 @@ class WorkflowBuilder:
         try:
             with open(workflow_file, 'w') as f:
                 json.dump(workflow_data, f, indent=2)
+            
+            logger.info("workflow_save_completed", 
+                        workflow_id=workflow.id,
+                        workflow_name=workflow.name,
+                        file_path=str(workflow_file))
         except Exception as e:
             console.print(f"❌ Failed to save workflow: {e}")
+            logger.error("workflow_save_failed", 
+                         workflow_id=workflow.id,
+                         workflow_name=workflow.name,
+                         error=str(e),
+                         error_type=type(e).__name__)
             
     def load_workflow(self, workflow_id: str) -> Optional[Workflow]:
         """Load a saved workflow.
@@ -930,9 +1038,15 @@ class WorkflowBuilder:
         Returns:
             Loaded workflow or None if not found
         """
+        logger.info("workflow_load_started", workflow_id=workflow_id)
+        
         workflow_file = self.workflows_dir / f"{workflow_id}.json"
         
         if not workflow_file.exists():
+            logger.warning("workflow_load_failed", 
+                           workflow_id=workflow_id, 
+                           reason="file_not_found",
+                           file_path=str(workflow_file))
             return None
             
         try:
@@ -963,10 +1077,19 @@ class WorkflowBuilder:
                 metadata=data.get("metadata", {})
             )
             
+            logger.info("workflow_load_completed", 
+                        workflow_id=workflow_id,
+                        workflow_name=workflow.name,
+                        step_count=len(workflow.steps))
+            
             return workflow
             
         except Exception as e:
             console.print(f"❌ Failed to load workflow: {e}")
+            logger.error("workflow_load_failed", 
+                         workflow_id=workflow_id,
+                         error=str(e),
+                         error_type=type(e).__name__)
             return None
             
     def list_workflows(self) -> List[Dict[str, Any]]:
@@ -975,6 +1098,7 @@ class WorkflowBuilder:
         Returns:
             List of workflow summaries
         """
+        logger.debug("workflow_list_started")
         workflows = []
         
         for workflow_file in self.workflows_dir.glob("*.json"):
@@ -993,7 +1117,10 @@ class WorkflowBuilder:
             except:
                 continue
                 
-        return sorted(workflows, key=lambda x: x["created_at"], reverse=True)
+        result = sorted(workflows, key=lambda x: x["created_at"], reverse=True)
+        
+        logger.debug("workflow_list_completed", workflow_count=len(result))
+        return result
         
     def show_workflows(self):
         """Display all saved workflows in a table."""
@@ -1070,13 +1197,16 @@ class WorkflowBuilder:
             tags=["daily", "update", "automation"]
         ))
         
+        logger.debug("builtin_templates_loading_completed", template_count=len(templates))
         return templates
         
     def _load_custom_templates(self):
         """Load custom templates from disk."""
+        logger.debug("custom_templates_loading_started")
         templates_file = self.templates_dir / "custom_templates.json"
         
         if not templates_file.exists():
+            logger.debug("custom_templates_file_not_found", file_path=str(templates_file))
             return
             
         try:
@@ -1106,12 +1236,23 @@ def create_interactive_workflow() -> Optional[Workflow]:
     Returns:
         Created workflow or None if cancelled
     """
+    logger.info("interactive_workflow_creation_started")
     builder = WorkflowBuilder()
-    return builder.build_workflow()
+    result = builder.build_workflow()
+    
+    if result:
+        logger.info("interactive_workflow_creation_completed", 
+                    workflow_name=result.name,
+                    workflow_id=result.id)
+    else:
+        logger.info("interactive_workflow_creation_cancelled")
+    
+    return result
 
 
 def list_saved_workflows():
     """List all saved workflows."""
+    logger.info("list_saved_workflows_called")
     builder = WorkflowBuilder()
     builder.show_workflows()
 

@@ -17,8 +17,10 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 from rich.console import Console
+from src.utils.custom_logger import get_logger
 
 console = Console()
+logger = get_logger(__name__)
 
 
 class ProgressStyle(Enum):
@@ -118,6 +120,7 @@ class EnvironmentAdapter:
     
     def __init__(self):
         """Initialize environment adapter."""
+        logger.info("environment_adapter_init_started")
         self.platform = platform.system().lower()
         self.is_tty = sys.stdout.isatty()
         self.terminal_width = self._get_terminal_width()
@@ -135,14 +138,32 @@ class EnvironmentAdapter:
         self.cpu_cores = os.cpu_count() or 1
         self.recommended_workers = min(4, max(1, self.cpu_cores // 2))
         
+        logger.info("environment_adapter_init_completed", 
+                    platform=self.platform,
+                    is_tty=self.is_tty,
+                    terminal_size=f"{self.terminal_width}x{self.terminal_height}",
+                    supports_color=self.supports_color,
+                    supports_unicode=self.supports_unicode,
+                    is_ci=self.is_ci,
+                    is_ssh=self.is_ssh,
+                    is_container=self.is_container,
+                    cpu_cores=self.cpu_cores,
+                    recommended_workers=self.recommended_workers)
+        
     def get_optimal_progress_style(self) -> str:
         """Determine optimal progress style for current environment.
         
         Returns:
             Recommended progress style name
         """
+        logger.debug("progress_style_optimization_started", 
+                     is_tty=self.is_tty, 
+                     is_ci=self.is_ci, 
+                     is_ssh=self.is_ssh, 
+                     terminal_width=self.terminal_width)
+        
         if not self.is_tty or self.is_ci:
-            return "simple"  # Basic progress for non-interactive
+            style = "simple"  # Basic progress for non-interactive
         elif self.is_ssh and not self.supports_color:
             return "minimal"  # Very basic for SSH without color
         elif self.is_ssh:
@@ -152,7 +173,12 @@ class EnvironmentAdapter:
         elif self.terminal_width < 120:
             return "advanced"  # Standard width
         else:
-            return "advanced"  # Full features for wide terminals
+            style = "advanced"  # Full features for wide terminals
+            
+        logger.debug("progress_style_optimization_completed", 
+                     recommended_style=style, 
+                     reasoning=f"tty={self.is_tty}, ci={self.is_ci}, ssh={self.is_ssh}, width={self.terminal_width}")
+        return style
             
     def get_optimal_update_frequency(self) -> str:
         """Determine optimal update frequency.
@@ -160,14 +186,24 @@ class EnvironmentAdapter:
         Returns:
             Recommended update frequency
         """
+        logger.debug("update_frequency_optimization_started", 
+                     is_ci=self.is_ci, 
+                     is_ssh=self.is_ssh, 
+                     is_container=self.is_container)
+        
         if self.is_ci:
-            return "slow"  # Minimal updates for CI
+            frequency = "slow"  # Minimal updates for CI
         elif self.is_ssh:
             return "normal"  # Moderate updates for SSH
         elif self.is_container:
             return "normal"  # Balanced for containers
         else:
-            return "adaptive"  # Dynamic adjustment for local use
+            frequency = "adaptive"  # Dynamic adjustment for local use
+            
+        logger.debug("update_frequency_optimization_completed", 
+                     recommended_frequency=frequency, 
+                     reasoning=f"ci={self.is_ci}, ssh={self.is_ssh}, container={self.is_container}")
+        return frequency
             
     def get_recommended_config(self) -> Dict[str, Any]:
         """Get environment-optimized configuration.
@@ -175,7 +211,9 @@ class EnvironmentAdapter:
         Returns:
             Configuration dictionary optimized for current environment
         """
-        return {
+        logger.info("environment_config_generation_started")
+        
+        config = {
             "progress": {
                 "style": self.get_optimal_progress_style(),
                 "show_eta": True,
@@ -210,6 +248,13 @@ class EnvironmentAdapter:
                 "cleanup_on_exit": True
             }
         }
+        
+        logger.info("environment_config_generation_completed", 
+                    config_sections=list(config.keys()),
+                    progress_style=config["progress"]["style"],
+                    supports_color=self.supports_color,
+                    use_icons=config["display"]["use_icons"])
+        return config
         
     def _get_terminal_width(self) -> int:
         """Get terminal width with fallback."""
@@ -345,15 +390,23 @@ class ConfigManager:
         Args:
             config_dir: Directory for configuration files (default: ~/.hdi)
         """
+        logger.info("config_manager_init_started", config_dir=str(config_dir) if config_dir else None)
+        
         self.config_dir = config_dir or Path.home() / ".hdi"
         self.config_file = self.config_dir / self.CONFIG_FILE_NAME
         self.environment = EnvironmentAdapter()
         
         # Ensure config directory exists
         self.config_dir.mkdir(exist_ok=True)
+        logger.debug("config_directory_created", config_dir=str(self.config_dir))
         
         # Load configuration
         self._config = self._load_configuration()
+        
+        logger.info("config_manager_init_completed", 
+                    config_dir=str(self.config_dir),
+                    config_file=str(self.config_file),
+                    config_file_exists=self.config_file.exists())
         
     def _get_default_config(self) -> CLIConfig:
         """Get default configuration.
@@ -374,15 +427,20 @@ class ConfigManager:
         Returns:
             Merged configuration from all sources
         """
+        logger.info("config_loading_started")
+        
         # Start with defaults
         config_dict = asdict(self._get_default_config())
+        logger.debug("default_config_loaded")
         
         # Apply environment optimizations
         env_config = self.environment.get_recommended_config()
         config_dict = self._deep_merge(config_dict, env_config)
+        logger.debug("environment_config_applied", env_optimizations=list(env_config.keys()))
         
         # Load user configuration if it exists
         if self.config_file.exists():
+            logger.debug("loading_user_config_file", config_file=str(self.config_file))
             try:
                 with open(self.config_file, 'r') as f:
                     user_config = yaml.safe_load(f) or {}
@@ -392,12 +450,26 @@ class ConfigManager:
                     user_config = user_config['cli']
                     
                 config_dict = self._deep_merge(config_dict, user_config)
+                logger.info("user_config_loaded", config_sections=list(user_config.keys()))
             except Exception as e:
                 console.print(f"[yellow]Warning: Could not load config file: {e}[/yellow]")
+                logger.warning("user_config_load_failed", 
+                               config_file=str(self.config_file), 
+                               error=str(e), 
+                               error_type=type(e).__name__)
+        else:
+            logger.debug("user_config_file_not_found", config_file=str(self.config_file))
                 
         # Apply environment variable overrides
         env_overrides = self._load_env_overrides()
         config_dict = self._deep_merge(config_dict, env_overrides)
+        if env_overrides:
+            logger.debug("env_overrides_applied", overrides=list(env_overrides.keys()))
+        
+        logger.info("config_loading_completed", 
+                    final_sections=list(config_dict.keys()),
+                    has_user_config=self.config_file.exists(),
+                    has_env_overrides=bool(env_overrides))
         
         return CLIConfig(**config_dict)
         
@@ -485,6 +557,8 @@ class ConfigManager:
             updates: Configuration updates to apply
             save: Whether to save changes to file
         """
+        logger.info("config_update_started", updates=list(updates.keys()), save=save)
+        
         # Apply updates to current config
         current_dict = asdict(self._config)
         updated_dict = self._deep_merge(current_dict, updates)
@@ -494,17 +568,28 @@ class ConfigManager:
         if save:
             self.save_config()
             
+        logger.info("config_update_completed", 
+                    updates_applied=list(updates.keys()), 
+                    saved_to_file=save)
+            
     def save_config(self) -> None:
         """Save current configuration to file."""
+        logger.info("config_save_started", config_file=str(self.config_file))
         try:
             # Convert to dict and wrap in 'cli' section
             config_dict = {'cli': asdict(self._config)}
             
             with open(self.config_file, 'w') as f:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+            
+            logger.info("config_save_completed", config_file=str(self.config_file))
                 
         except Exception as e:
             console.print(f"[red]Error saving configuration: {e}[/red]")
+            logger.error("config_save_failed", 
+                         config_file=str(self.config_file), 
+                         error=str(e), 
+                         error_type=type(e).__name__)
             
     def reset_config(self, section: Optional[str] = None) -> None:
         """Reset configuration to defaults.
@@ -512,6 +597,8 @@ class ConfigManager:
         Args:
             section: Specific section to reset, or None for all
         """
+        logger.info("config_reset_started", section=section)
+        
         if section:
             # Reset specific section
             default_config = self._get_default_config()
@@ -533,6 +620,8 @@ class ConfigManager:
             self._config = self._load_configuration()
             
         self.save_config()
+        
+        logger.info("config_reset_completed", section=section or "all")
         
     def get_setting(self, path: str, default: Any = None) -> Any:
         """Get a specific configuration setting.
@@ -564,6 +653,8 @@ class ConfigManager:
             value: Value to set
             save: Whether to save changes to file
         """
+        logger.info("setting_update_started", path=path, value=value, save=save)
+        
         parts = path.split('.')
         
         # Build nested update dictionary
@@ -577,6 +668,8 @@ class ConfigManager:
         current[parts[-1]] = value
         
         self.update_config(update, save)
+        
+        logger.info("setting_update_completed", path=path, value=value, saved=save)
         
     def list_settings(self, section: Optional[str] = None) -> Dict[str, Any]:
         """List all configuration settings.
@@ -600,6 +693,7 @@ class ConfigManager:
         Returns:
             List of validation errors (empty if valid)
         """
+        logger.info("config_validation_started")
         errors = []
         
         # Validate progress settings
@@ -628,6 +722,11 @@ class ConfigManager:
             
         if behavior.default_batch_size < 1:
             errors.append("default_batch_size must be at least 1")
+        
+        logger.info("config_validation_completed", 
+                    is_valid=len(errors) == 0, 
+                    error_count=len(errors),
+                    errors=errors if errors else None)
             
         return errors
         
@@ -645,8 +744,14 @@ class ConfigManager:
         Args:
             save: Whether to save changes to file
         """
+        logger.info("environment_optimization_started", save=save)
+        
         env_config = self.environment.get_recommended_config()
         self.update_config(env_config, save)
+        
+        logger.info("environment_optimization_completed", 
+                    optimizations_applied=list(env_config.keys()), 
+                    saved=save)
         
     def export_config(self, file_path: Path, format: str = "yaml") -> None:
         """Export configuration to file.
@@ -655,6 +760,8 @@ class ConfigManager:
             file_path: Path to export file
             format: Export format ("yaml" or "json")
         """
+        logger.info("config_export_started", file_path=str(file_path), format=format)
+        
         config_dict = {'cli': asdict(self._config)}
         
         try:
@@ -666,9 +773,16 @@ class ConfigManager:
                     json.dump(config_dict, f, indent=2)
             else:
                 raise ValueError(f"Unsupported format: {format}")
+            
+            logger.info("config_export_completed", file_path=str(file_path), format=format)
                 
         except Exception as e:
             console.print(f"[red]Error exporting configuration: {e}[/red]")
+            logger.error("config_export_failed", 
+                         file_path=str(file_path), 
+                         format=format, 
+                         error=str(e), 
+                         error_type=type(e).__name__)
             
     def import_config(self, file_path: Path, merge: bool = True, save: bool = True) -> None:
         """Import configuration from file.
@@ -678,6 +792,11 @@ class ConfigManager:
             merge: Whether to merge with existing config or replace
             save: Whether to save changes to file
         """
+        logger.info("config_import_started", 
+                    file_path=str(file_path), 
+                    merge=merge, 
+                    save=save)
+        
         try:
             with open(file_path, 'r') as f:
                 if file_path.suffix.lower() in ['.yaml', '.yml']:
@@ -693,14 +812,27 @@ class ConfigManager:
                 
             if merge:
                 self.update_config(imported_config, save)
+                logger.info("config_import_completed", 
+                            file_path=str(file_path), 
+                            merge=True, 
+                            sections_imported=list(imported_config.keys()))
             else:
                 # Replace entire configuration
                 self._config = CLIConfig(**imported_config)
                 if save:
                     self.save_config()
+                logger.info("config_import_completed", 
+                            file_path=str(file_path), 
+                            merge=False, 
+                            config_replaced=True)
                     
         except Exception as e:
             console.print(f"[red]Error importing configuration: {e}[/red]")
+            logger.error("config_import_failed", 
+                         file_path=str(file_path), 
+                         merge=merge, 
+                         error=str(e), 
+                         error_type=type(e).__name__)
 
 
 # Global configuration manager instance
@@ -715,6 +847,7 @@ def get_config_manager() -> ConfigManager:
     """
     global _config_manager
     if _config_manager is None:
+        logger.info("global_config_manager_created")
         _config_manager = ConfigManager()
     return _config_manager
 
