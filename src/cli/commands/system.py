@@ -37,6 +37,7 @@ def list_jobs(
     api: str = typer.Option("databento", help="API type to list jobs for")
 ):
     """List all available predefined jobs for the specified API."""
+    logger.info("command_started", command="list_jobs", api=api, user="cli")
     console.print(f"📋 [bold blue]Available jobs for {api.upper()}:[/bold blue]")
 
     try:
@@ -46,6 +47,7 @@ def list_jobs(
 
         if not jobs:
             console.print("ℹ️  [yellow]No predefined jobs found[/yellow]")
+            logger.info("command_completed", command="list_jobs", api=api, job_count=0, status="no_jobs")
             return
 
         table = Table(show_header=True, header_style="bold magenta")
@@ -72,16 +74,25 @@ def list_jobs(
             )
 
         console.print(table)
+        logger.info("command_completed", command="list_jobs", api=api, job_count=len(jobs), status="success")
 
     except Exception as e:
         console.print(f"❌ [red]Failed to load jobs: {e}[/red]")
+        logger.error("command_failed", command="list_jobs", api=api, error=str(e), error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
 @app.command()
 def status():
     """Check system status and connectivity."""
+    logger.info("command_started", command="status", user="cli")
     console.print("🔍 [bold blue]Checking system status...[/bold blue]")
+
+    status_results = {
+        "database_connected": False,
+        "api_key_configured": False,
+        "log_directory_exists": False
+    }
 
     # Check database connectivity
     try:
@@ -95,6 +106,7 @@ def status():
 
         if not all([DB_USER, DB_PASSWORD, DB_NAME]):
             console.print("❌ [red]Database environment variables not set[/red]")
+            logger.error("system_check_failed", component="database", reason="missing_env_vars")
             raise typer.Exit(1)
 
         conn = psycopg2.connect(
@@ -106,24 +118,33 @@ def status():
         )
 
         console.print("✅ [green]TimescaleDB connection: OK[/green]")
+        status_results["database_connected"] = True
+        logger.info("system_check_success", component="database", host=DB_HOST, port=DB_PORT, dbname=DB_NAME)
         conn.close()
 
     except Exception as e:
         console.print(f"❌ [red]TimescaleDB connection: FAILED ({e})[/red]")
+        logger.error("system_check_failed", component="database", error=str(e), error_type=type(e).__name__)
 
     # Check API key availability
     databento_key = os.getenv('DATABENTO_API_KEY')
     if databento_key:
         console.print("✅ [green]Databento API key: Configured[/green]")
+        status_results["api_key_configured"] = True
+        logger.info("system_check_success", component="api_key", provider="databento")
     else:
         console.print("❌ [red]Databento API key: Not configured[/red]")
+        logger.warning("system_check_warning", component="api_key", provider="databento", reason="not_configured")
 
     # Check log directory
     log_dir = Path("logs")
     if log_dir.exists():
         console.print("✅ [green]Log directory: OK[/green]")
+        status_results["log_directory_exists"] = True
+        logger.info("system_check_success", component="log_directory", path=str(log_dir))
     else:
         console.print("⚠️  [yellow]Log directory: Missing (will be created)[/yellow]")
+        logger.warning("system_check_warning", component="log_directory", path=str(log_dir), reason="missing")
 
     console.print("\n📊 [bold cyan]System Information:[/bold cyan]")
     info_table = Table(show_header=True, header_style="bold magenta")
@@ -135,16 +156,31 @@ def status():
     info_table.add_row("Config Directory", str(Path("configs")))
 
     console.print(info_table)
+    
+    # Log overall status
+    overall_status = "healthy" if all(status_results.values()) else "degraded"
+    logger.info("command_completed", command="status", status=overall_status, **status_results)
 
 
 @app.command()
 def version():
     """Display version information."""
+    logger.info("command_started", command="version", user="cli")
+    
+    version_info = {
+        "app_version": "1.0.0-mvp",
+        "build": "Story 2.6 Implementation",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "cli_framework": "Typer with Rich formatting"
+    }
+    
     console.print("🏷️  [bold blue]Historical Data Ingestor[/bold blue]")
-    console.print("Version: 1.0.0-mvp")
-    console.print("Build: Story 2.6 Implementation")
-    console.print(f"Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
-    console.print(f"CLI Framework: Typer with Rich formatting")
+    console.print(f"Version: {version_info['app_version']}")
+    console.print(f"Build: {version_info['build']}")
+    console.print(f"Python: {version_info['python_version']}")
+    console.print(f"CLI Framework: {version_info['cli_framework']}")
+    
+    logger.info("command_completed", command="version", **version_info)
 
 
 @app.command()
@@ -188,16 +224,22 @@ def monitor(
         python main.py monitor --cleanup        # Clean up old operations
     """
     
+    logger.info("command_started", command="monitor", live=live, operation_id=operation_id, 
+                history=history, cleanup=cleanup, cleanup_days=cleanup_days, user="cli")
+    
     if cleanup:
         console.print("🧹 [cyan]Cleaning up old operations...[/cyan]")
+        logger.info("monitor_cleanup_started", cleanup_days=cleanup_days)
         monitor_instance = OperationMonitor()
         monitor_instance.cleanup_old_operations(cleanup_days)
         console.print(f"✅ [green]Cleanup completed (operations older than {cleanup_days} days)[/green]")
+        logger.info("monitor_cleanup_completed", cleanup_days=cleanup_days)
         return
     
     if live:
         console.print("🔄 [cyan]Starting live status dashboard...[/cyan]")
         console.print("💡 [dim]Press Ctrl+C to exit[/dim]\n")
+        logger.info("monitor_live_dashboard_started")
         
         try:
             dashboard = LiveStatusDashboard()
@@ -206,6 +248,7 @@ def monitor(
                 
                 # Keep dashboard running
                 import time
+                start_time = time.time()
                 while True:
                     time.sleep(1)
                     # Refresh operations every 5 seconds
@@ -215,13 +258,17 @@ def monitor(
                         
         except KeyboardInterrupt:
             console.print("\n✅ [green]Dashboard stopped[/green]")
+            runtime = time.time() - start_time
+            logger.info("monitor_live_dashboard_stopped", runtime_seconds=runtime, stop_reason="user_interrupt")
             
     elif history:
+        logger.info("monitor_history_requested", limit=20)
         monitor_instance = OperationMonitor()
         history_ops = monitor_instance.get_operation_history(limit=20)
         
         if not history_ops:
             console.print("📋 [dim]No operations found in history[/dim]")
+            logger.info("monitor_history_completed", operation_count=0)
             return
             
         # Create history table
@@ -272,14 +319,17 @@ def monitor(
             
         console.print(f"\n📜 [bold cyan]Operation History (Last 20)[/bold cyan]\n")
         console.print(history_table)
+        logger.info("monitor_history_completed", operation_count=len(history_ops))
         
     elif operation_id:
+        logger.info("monitor_operation_requested", operation_id=operation_id)
         monitor_instance = OperationMonitor()
         if operation_id in monitor_instance.operations:
             operation = monitor_instance.operations[operation_id]
             
             # Show detailed operation info
             console.print(f"\n🔍 [bold cyan]Operation Details: {operation_id}[/bold cyan]\n")
+            logger.info("monitor_operation_found", operation_id=operation_id, status=operation.get('status', 'unknown'))
             
             info_table = Table(show_header=False, box=None)
             info_table.add_column("Field", style="cyan", width=20)
@@ -322,9 +372,11 @@ def monitor(
                     
         else:
             console.print(f"❌ [red]Operation '{operation_id}' not found[/red]")
+            logger.warning("monitor_operation_not_found", operation_id=operation_id)
             
     else:
         # Show quick status overview
+        logger.info("monitor_overview_requested")
         monitor_instance = OperationMonitor()
         active_ops = monitor_instance.get_active_operations()
         recent_ops = monitor_instance.get_operation_history(limit=5)
@@ -352,6 +404,7 @@ def monitor(
                 console.print(f"  {status_icon} {description[:40]}")
                 
         console.print(f"\n💡 [dim]Use --live for real-time dashboard, --history for full history[/dim]")
+        logger.info("monitor_overview_completed", active_operations=len(active_ops), recent_operations=len(recent_ops))
 
 
 @app.command()
@@ -438,6 +491,8 @@ def config(
         python main.py config environment
         python main.py config set --apply-env
     """
+    logger.info("command_started", command="config", action=action, key=key, value=value, 
+                section=section, file_path=file_path, format=format, save=save, apply_env=apply_env, user="cli")
     config_manager = get_config_manager()
     
     try:
@@ -445,39 +500,51 @@ def config(
             if not key:
                 console.print("❌ [red]Key required for get action[/red]")
                 console.print("💡 Use: python main.py config get <key>")
+                logger.error("config_action_failed", action="get", reason="missing_key")
                 raise typer.Exit(1)
                 
             value = config_manager.get_setting(key)
             if value is not None:
                 console.print(f"🔧 [cyan]{key}[/cyan] = [green]{value}[/green]")
+                logger.info("config_action_completed", action="get", key=key, value=str(value))
             else:
                 console.print(f"❌ [red]Setting '{key}' not found[/red]")
+                logger.warning("config_action_failed", action="get", key=key, reason="key_not_found")
                 
         elif action == "set":
             if apply_env:
                 # Apply environment optimizations
                 console.print("🔧 [cyan]Applying environment optimizations...[/cyan]")
+                logger.info("config_applying_env_optimizations")
                 config_manager.apply_environment_optimizations(save)
                 console.print("✅ [green]Environment optimizations applied[/green]")
+                logger.info("config_action_completed", action="set", apply_env=True, save=save)
             elif not key or value is None:
                 console.print("❌ [red]Key and value required for set action[/red]")
                 console.print("💡 Use: python main.py config set <key> <value>")
+                logger.error("config_action_failed", action="set", reason="missing_key_or_value")
                 raise typer.Exit(1)
             else:
                 # Parse value based on type
                 parsed_value = value
+                original_type = "string"
                 if value.lower() in ['true', 'false']:
                     parsed_value = value.lower() == 'true'
+                    original_type = "boolean"
                 elif value.isdigit():
                     parsed_value = int(value)
+                    original_type = "integer"
                 elif value.replace('.', '').isdigit():
                     try:
                         parsed_value = float(value)
+                        original_type = "float"
                     except ValueError:
                         pass
                         
                 config_manager.set_setting(key, parsed_value, save)
                 console.print(f"✅ [green]Set {key} = {parsed_value}[/green]")
+                logger.info("config_action_completed", action="set", key=key, value=str(parsed_value), 
+                           original_value=value, parsed_type=original_type, save=save)
                 
         elif action == "list":
             settings = config_manager.list_settings(section)
@@ -498,15 +565,30 @@ def config(
                         
             _print_settings(settings)
             
+            # Count total settings for logging
+            def _count_settings(data):
+                count = 0
+                for value in data.values():
+                    if isinstance(value, dict):
+                        count += _count_settings(value)
+                    else:
+                        count += 1
+                return count
+            
+            setting_count = _count_settings(settings)
+            logger.info("config_action_completed", action="list", section=section, setting_count=setting_count)
+            
         elif action == "reset":
             if section:
                 console.print(f"🔄 [yellow]Resetting {section} section to defaults...[/yellow]")
                 config_manager.reset_config(section)
                 console.print(f"✅ [green]{section.title()} section reset to defaults[/green]")
+                logger.info("config_action_completed", action="reset", section=section)
             else:
                 console.print("🔄 [yellow]Resetting entire configuration to defaults...[/yellow]")
                 config_manager.reset_config()
                 console.print("✅ [green]Configuration reset to defaults[/green]")
+                logger.info("config_action_completed", action="reset", section="all")
                 
         elif action == "export":
             if not file_path:
@@ -516,19 +598,23 @@ def config(
                 
             config_manager.export_config(Path(file_path), format)
             console.print(f"📤 [green]Configuration exported to {file_path}[/green]")
+            logger.info("config_action_completed", action="export", file_path=file_path, format=format)
             
         elif action == "import":
             if not file_path:
                 console.print("❌ [red]File path required for import action[/red]")
                 console.print("💡 Use: python main.py config import --file <path>")
+                logger.error("config_action_failed", action="import", reason="missing_file_path")
                 raise typer.Exit(1)
                 
             if not Path(file_path).exists():
                 console.print(f"❌ [red]File not found: {file_path}[/red]")
+                logger.error("config_action_failed", action="import", file_path=file_path, reason="file_not_found")
                 raise typer.Exit(1)
                 
             config_manager.import_config(Path(file_path), merge=True, save=save)
             console.print(f"📥 [green]Configuration imported from {file_path}[/green]")
+            logger.info("config_action_completed", action="import", file_path=file_path, save=save)
             
         elif action == "validate":
             errors = config_manager.validate_config()
@@ -536,9 +622,11 @@ def config(
                 console.print("❌ [red]Configuration validation failed:[/red]\n")
                 for error in errors:
                     console.print(f"  • [red]{error}[/red]")
+                logger.error("config_action_failed", action="validate", error_count=len(errors), errors=errors)
                 raise typer.Exit(1)
             else:
                 console.print("✅ [green]Configuration is valid[/green]")
+                logger.info("config_action_completed", action="validate", status="valid")
                 
         elif action == "environment":
             env_info = config_manager.get_environment_info()
@@ -583,15 +671,17 @@ def config(
             console.print(f"  ⚡ Update Frequency: [green]{env_info['optimal_update_frequency']}[/green]")
             
             console.print("\n🔧 [dim]Use 'python main.py config set --apply-env' to apply these optimizations[/dim]")
+            logger.info("config_action_completed", action="environment", **env_info)
             
         else:
             console.print(f"❌ [red]Unknown action: {action}[/red]")
             console.print("💡 Valid actions: get, set, list, reset, export, import, validate, environment")
+            logger.error("config_action_failed", action=action, reason="unknown_action")
             raise typer.Exit(1)
             
     except Exception as e:
         console.print(f"❌ [red]Configuration error: {e}[/red]")
-        logger.error(f"Configuration error: {e}")
+        logger.error("config_action_failed", action=action, error=str(e), error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
@@ -625,7 +715,8 @@ def status_dashboard(
         python main.py status-dashboard --no-system        # Hide system metrics
         python main.py status-dashboard --no-queue         # Hide queue panel
     """
-    log_user_message(f"Starting status dashboard: refresh_rate={refresh_rate}Hz, system={show_system}, queue={show_queue}")
+    logger.info("command_started", command="status_dashboard", refresh_rate=refresh_rate, 
+                show_system=show_system, show_queue=show_queue, user="cli")
     console.print("🖥️  [bold cyan]Starting Live Status Dashboard[/bold cyan]")
     console.print(f"📊 Refresh Rate: {refresh_rate} Hz")
     console.print("⏹️  Press Ctrl+C to exit\n")
@@ -638,15 +729,16 @@ def status_dashboard(
             show_operation_queue=show_queue
         )
         
+        logger.info("status_dashboard_starting", refresh_rate=refresh_rate)
         # Start the dashboard (this will run until Ctrl+C)
         dashboard.start()
         
     except KeyboardInterrupt:
         console.print("\n👋 [green]Dashboard stopped by user[/green]")
-        log_status("Status dashboard stopped by user")
+        logger.info("status_dashboard_stopped", stop_reason="user_interrupt")
         
     except Exception as e:
         console.print(f"\n❌ [red]Dashboard error: {e}[/red]")
         console.print("💡 [blue]Use 'python main.py troubleshoot status-dashboard' for help[/blue]")
-        logger.exception("Status dashboard failed")
+        logger.error("command_failed", command="status_dashboard", error=str(e), error_type=type(e).__name__)
         raise typer.Exit(1)

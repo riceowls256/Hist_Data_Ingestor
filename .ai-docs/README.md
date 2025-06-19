@@ -1,4 +1,5 @@
 # 🤖 Roy's AI Orchestration Framework v1.0
+## AKA "RoySauce" 🔥
 
 **Author**: Roy  
 **Version**: 1.0  

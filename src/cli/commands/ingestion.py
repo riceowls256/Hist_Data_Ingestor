@@ -23,7 +23,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from dotenv import load_dotenv
 
-from utils.custom_logger import setup_logging, get_logger, log_status, log_progress, log_user_message
+from utils.custom_logger import get_logger
 from querying.exceptions import QueryingError, SymbolResolutionError, QueryExecutionError
 from querying import QueryBuilder
 from core.pipeline_orchestrator import PipelineOrchestrator, PipelineError
@@ -180,15 +180,19 @@ def ingest(
         # Preview operation without execution
         python main.py ingest --api databento --job test_job --dry-run
     """
-    log_user_message("Starting data ingestion process")
+    logger.info("command_started", command="ingest", api=api, job=job, dataset=dataset, 
+                schema=schema, symbols=symbols, start_date=start_date, end_date=end_date, 
+                stype_in=stype_in, force=force, dry_run=dry_run, guided=guided, user="cli")
     
     try:
         # Handle guided mode
         if guided:
+            logger.info("guided_mode_started")
             console.print("🧭 [bold cyan]Guided Ingestion Mode[/bold cyan]")
             guided_params = GuidedMode.run_ingestion_wizard()
             if not guided_params:
                 console.print("❌ [red]Guided mode cancelled by user[/red]")
+                logger.info("guided_mode_cancelled")
                 raise typer.Exit(code=1)
             
             # Update parameters with guided selections
@@ -200,6 +204,7 @@ def ingest(
             start_date = guided_params.get("start_date", start_date)
             end_date = guided_params.get("end_date", end_date)
             stype_in = guided_params.get("stype_in", stype_in)
+            logger.info("guided_mode_completed", selected_params=guided_params.keys())
         
         # Create pipeline orchestrator
         orchestrator = PipelineOrchestrator()
@@ -209,11 +214,13 @@ def ingest(
         
         # Handle job-based configuration
         if job:
+            logger.info("job_loading_started", job=job, api=api)
             console.print(f"📋 [cyan]Loading predefined job: {job}[/cyan]")
             job_config = config_manager.get_job_config(api, job)
             if not job_config:
                 console.print(f"❌ [red]Job '{job}' not found for API '{api}'[/red]")
                 console.print(f"💡 [yellow]Use 'python main.py list-jobs --api {api}' to see available jobs[/yellow]")
+                logger.error("job_loading_failed", job=job, api=api, reason="job_not_found")
                 raise typer.Exit(code=1)
             
             # Override defaults with job config
@@ -239,6 +246,7 @@ def ingest(
             console.print(f"❌ [red]Missing required parameters: {', '.join(missing_params)}[/red]")
             console.print("💡 [yellow]Use --guided mode for interactive parameter selection[/yellow]")
             console.print("💡 [yellow]Or specify parameters manually. Use --help for details.[/yellow]")
+            logger.error("parameter_validation_failed", missing_params=missing_params)
             raise typer.Exit(code=1)
         
         # Parse symbols
@@ -278,6 +286,7 @@ def ingest(
             console.print("❌ [red]Validation errors:[/red]")
             for error in validation_errors:
                 console.print(f"  • {error}")
+            logger.error("input_validation_failed", validation_errors=validation_errors, error_count=len(validation_errors))
             raise typer.Exit(code=1)
         
         # Smart validation and suggestions
@@ -358,6 +367,8 @@ def ingest(
             console.print("✅ [green]All parameters are valid[/green]")
             console.print("🚀 [green]Ready to execute ingestion[/green]")
             console.print(f"💡 [blue]Remove --dry-run flag to execute ingestion[/blue]")
+            logger.info("command_completed", command="ingest", mode="dry_run", job_name=job_config['name'], 
+                       symbol_count=len(symbol_list), schema=schema)
             return
         
         # Confirmation prompt
@@ -366,10 +377,13 @@ def ingest(
             confirmation = input().strip().lower()
             if confirmation not in ['y', 'yes']:
                 console.print("❌ [red]Ingestion cancelled by user[/red]")
+                logger.info("command_cancelled", command="ingest", reason="user_declined")
                 raise typer.Exit(code=1)
         
         # Execute ingestion
         console.print(f"\n🚀 [bold green]Starting ingestion...[/bold green]")
+        logger.info("ingestion_execution_started", job_name=job_config['name'], symbol_count=len(symbol_list), 
+                    schema=schema, date_range=f"{start_date}_to_{end_date}")
         
         with EnhancedProgress() as progress:
             # Create progress task
@@ -389,6 +403,10 @@ def ingest(
             console.print(f"📊 Records processed: {result.get('records_processed', 'N/A')}")
             console.print(f"⏱️  Duration: {format_duration(result.get('duration', 0))}")
             
+            logger.info("command_completed", command="ingest", status="success", 
+                       job_name=job_config['name'], records_processed=result.get('records_processed', 0),
+                       duration_seconds=result.get('duration', 0), warning_count=len(result.get('warnings', [])))
+            
             if result.get("warnings"):
                 console.print(f"\n⚠️  [yellow]Warnings ({len(result['warnings'])}):[/yellow]")
                 for warning in result["warnings"][:5]:  # Show first 5 warnings
@@ -398,6 +416,10 @@ def ingest(
         
         else:
             console.print(f"❌ [bold red]Ingestion failed: {result.get('error', 'Unknown error')}[/bold red]")
+            
+            logger.error("command_failed", command="ingest", job_name=job_config['name'],
+                        error=result.get('error', 'Unknown error'), 
+                        troubleshooting_tips=result.get('troubleshooting_tips', []))
             
             if result.get("troubleshooting_tips"):
                 console.print(f"\n💡 [blue]Troubleshooting tips:[/blue]")
@@ -409,12 +431,13 @@ def ingest(
     except PipelineError as e:
         console.print(f"❌ [red]Pipeline error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot pipeline' for help[/blue]")
+        logger.error("command_failed", command="ingest", error=str(e), error_type="PipelineError")
         raise typer.Exit(code=1)
     
     except Exception as e:
         console.print(f"❌ [red]Unexpected error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot' for general help[/blue]")
-        logger.exception("Ingestion command failed with unexpected error")
+        logger.error("command_failed", command="ingest", error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 
@@ -450,26 +473,32 @@ def backfill(
         # Preview operation without execution
         python main.py backfill SP500_SAMPLE --dry-run
     """
-    log_user_message(f"Starting backfill operation for {symbol_group}")
+    logger.info("command_started", command="backfill", symbol_group=symbol_group, lookback=lookback, 
+                schemas=schemas, api=api, dataset=dataset, batch_size=batch_size, 
+                retry_failed=retry_failed, dry_run=dry_run, force=force, user="cli")
     
     try:
         # Initialize symbol group manager
         symbol_manager = SymbolGroupManager()
         
         # Resolve symbol group
+        logger.info("symbol_group_resolution_started", symbol_group=symbol_group)
         console.print(f"🔍 [cyan]Resolving symbol group: {symbol_group}[/cyan]")
         
         if symbol_group in symbol_manager.get_predefined_groups():
             symbols = symbol_manager.get_group_symbols(symbol_group)
             console.print(f"📋 [green]Found predefined group with {len(symbols)} symbols[/green]")
+            logger.info("symbol_group_resolved", group_type="predefined", symbol_count=len(symbols))
         else:
             # Treat as custom symbol list
             symbols = parse_symbols(symbol_group)
             console.print(f"📝 [green]Using custom symbol list with {len(symbols)} symbols[/green]")
+            logger.info("symbol_group_resolved", group_type="custom", symbol_count=len(symbols))
         
         if not symbols:
             console.print(f"❌ [red]No symbols found for group: {symbol_group}[/red]")
             console.print(f"💡 [yellow]Use 'python main.py groups' to see available groups[/yellow]")
+            logger.error("symbol_group_resolution_failed", symbol_group=symbol_group, reason="no_symbols_found")
             raise typer.Exit(code=1)
         
         # Calculate date range from lookback period
@@ -491,6 +520,7 @@ def backfill(
         if lookback not in lookback_mapping:
             console.print(f"❌ [red]Invalid lookback period: {lookback}[/red]")
             console.print(f"💡 [yellow]Valid options: {', '.join(lookback_mapping.keys())}[/yellow]")
+            logger.error("lookback_validation_failed", lookback=lookback, valid_options=list(lookback_mapping.keys()))
             raise typer.Exit(code=1)
         
         start_date = end_date - lookback_mapping[lookback]
@@ -521,6 +551,8 @@ def backfill(
             console.print("✅ [green]All parameters are valid[/green]")
             console.print("🚀 [green]Ready to execute backfill[/green]")
             console.print(f"💡 [blue]Remove --dry-run flag to execute backfill[/blue]")
+            logger.info("command_completed", command="backfill", mode="dry_run", 
+                       symbol_count=len(symbols), total_operations=total_operations, estimated_time=estimated_time)
             return
         
         # Confirmation prompt
@@ -529,10 +561,14 @@ def backfill(
             confirmation = input().strip().lower()
             if confirmation not in ['y', 'yes']:
                 console.print("❌ [red]Backfill cancelled by user[/red]")
+                logger.info("command_cancelled", command="backfill", reason="user_declined", 
+                           total_operations=total_operations)
                 raise typer.Exit(code=1)
         
         # Execute backfill
         console.print(f"\n🚀 [bold green]Starting backfill operation...[/bold green]")
+        logger.info("backfill_execution_started", symbol_count=len(symbols), schema_count=len(schemas),
+                    total_operations=total_operations, batch_size=batch_size)
         
         # Create pipeline orchestrator
         orchestrator = PipelineOrchestrator()
@@ -631,9 +667,19 @@ def backfill(
             for warning in results["warnings"][:5]:
                 console.print(f"  • {warning}")
         
+        # Log final results
+        logger.info("command_completed", command="backfill", status="completed",
+                    successful_operations=len(results["successful"]), 
+                    failed_operations=len(results["failed"]),
+                    warning_count=len(results["warnings"]),
+                    total_operations=total_operations)
+        
         # Exit with error if any operations failed
         if results["failed"]:
             console.print(f"\n💡 [blue]Use 'python main.py troubleshoot backfill' for help with failures[/blue]")
+            logger.error("command_completed_with_failures", command="backfill", 
+                        failed_operations=len(results["failed"]), 
+                        successful_operations=len(results["successful"]))
             raise typer.Exit(code=1)
         
         console.print(f"\n🎉 [bold green]Backfill completed successfully![/bold green]")
@@ -641,5 +687,5 @@ def backfill(
     except Exception as e:
         console.print(f"❌ [red]Backfill operation failed: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot backfill' for help[/blue]")
-        logger.exception("Backfill command failed with unexpected error")
+        logger.error("command_failed", command="backfill", error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)

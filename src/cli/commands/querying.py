@@ -21,7 +21,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from dotenv import load_dotenv
 
-from utils.custom_logger import setup_logging, get_logger, log_status, log_progress, log_user_message
+from utils.custom_logger import get_logger
 from querying.exceptions import QueryingError, SymbolResolutionError, QueryExecutionError
 from querying import QueryBuilder
 from core.pipeline_orchestrator import PipelineOrchestrator, PipelineError
@@ -314,15 +314,19 @@ def query(
         # Validate parameters only
         python main.py query -s ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --validate-only
     """
-    log_user_message("Starting data query process")
+    logger.info("command_started", command="query", symbols=symbols, start_date=start_date, 
+                end_date=end_date, schema=schema, output_format=output_format, output_file=output_file,
+                limit=limit, dry_run=dry_run, validate_only=validate_only, guided=guided, user="cli")
     
     try:
         # Handle guided mode
         if guided:
+            logger.info("guided_mode_started")
             console.print("🧭 [bold cyan]Guided Query Mode[/bold cyan]")
             guided_params = GuidedMode.guided_query()
             if not guided_params:
                 console.print("❌ [red]Guided mode cancelled by user[/red]")
+                logger.info("guided_mode_cancelled")
                 raise typer.Exit(code=1)
             
             # Update parameters with guided selections
@@ -333,12 +337,14 @@ def query(
             output_format = guided_params.get("output_format", output_format)
             output_file = guided_params.get("output_file", output_file)
             limit = guided_params.get("limit", limit)
+            logger.info("guided_mode_completed", selected_params=list(guided_params.keys()))
         
         # Parse and validate symbols
         parsed_symbols = parse_query_symbols(symbols)
         if not parsed_symbols:
             console.print("❌ [red]No valid symbols provided[/red]")
             console.print("💡 [yellow]Example: -s ES.c.0,NQ.c.0 or --symbols ES.c.0 --symbols NQ.c.0[/yellow]")
+            logger.error("symbol_parsing_failed", symbols=symbols, reason="no_valid_symbols")
             raise typer.Exit(code=1)
         
         # Validate parameters
@@ -376,6 +382,7 @@ def query(
             console.print("❌ [red]Validation errors:[/red]")
             for error in validation_errors:
                 console.print(f"  • {error}")
+            logger.error("parameter_validation_failed", validation_errors=validation_errors, error_count=len(validation_errors))
             raise typer.Exit(code=1)
         
         # Smart validation and suggestions
@@ -408,6 +415,8 @@ def query(
         # Query scope validation
         if not validate_query_scope(parsed_symbols, start_date_obj, end_date_obj, schema):
             console.print("❌ [red]Query cancelled by user[/red]")
+            logger.info("query_cancelled", reason="user_declined_scope", symbol_count=len(parsed_symbols), 
+                       date_range_days=(end_date_obj - start_date_obj).days, schema=schema)
             raise typer.Exit(code=1)
         
         # Display operation summary
@@ -426,6 +435,8 @@ def query(
             console.print(f"\n✅ [green]Validation passed - parameters are valid[/green]")
             console.print(f"🔍 [blue]Query would retrieve {schema} data for {len(parsed_symbols)} symbols[/blue]")
             console.print(f"💡 [blue]Remove --validate-only flag to execute query[/blue]")
+            logger.info("command_completed", command="query", mode="validate_only", 
+                       symbol_count=len(parsed_symbols), schema=schema)
             return
         
         # Dry run mode
@@ -443,10 +454,16 @@ def query(
             
             console.print(f"\n🚀 [green]Ready to execute query[/green]")
             console.print(f"💡 [blue]Remove --dry-run flag to execute query[/blue]")
+            logger.info("command_completed", command="query", mode="dry_run", 
+                       symbol_count=len(parsed_symbols), schema=schema, 
+                       date_range_days=(end_date_obj - start_date_obj).days)
             return
         
         # Execute query
         console.print(f"\n🚀 [bold green]Executing query...[/bold green]")
+        logger.info("query_execution_started", symbol_count=len(parsed_symbols), schema=schema,
+                    date_range_days=(end_date_obj - start_date_obj).days, output_format=output_format,
+                    limit=limit)
         
         # Initialize QueryBuilder
         qb = QueryBuilder()
@@ -494,6 +511,10 @@ def query(
         console.print(f"📈 Records retrieved: {len(results):,}")
         console.print(f"⏱️  Execution time: {execution_time:.2f} seconds")
         
+        logger.info("command_completed", command="query", status="success",
+                    records_retrieved=len(results), execution_time=execution_time,
+                    symbol_count=len(parsed_symbols), schema=schema, output_format=output_format)
+        
         if results:
             console.print(f"📅 Date range: {min(r.get('ts_event', r.get('date', 'N/A')) for r in results)} to {max(r.get('ts_event', r.get('date', 'N/A')) for r in results)}")
         
@@ -535,22 +556,25 @@ def query(
     except QueryingError as e:
         console.print(f"❌ [red]Query error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot query' for help[/blue]")
+        logger.error("command_failed", command="query", error=str(e), error_type="QueryingError")
         raise typer.Exit(code=1)
     
     except SymbolResolutionError as e:
         console.print(f"❌ [red]Symbol resolution error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py symbol-lookup' to find valid symbols[/blue]")
+        logger.error("command_failed", command="query", error=str(e), error_type="SymbolResolutionError")
         raise typer.Exit(code=1)
     
     except QueryExecutionError as e:
         console.print(f"❌ [red]Query execution error: {e}[/red]")
         console.print(f"💡 [blue]Check database connectivity and try again[/blue]")
+        logger.error("command_failed", command="query", error=str(e), error_type="QueryExecutionError")
         raise typer.Exit(code=1)
     
     except Exception as e:
         console.print(f"❌ [red]Unexpected error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot' for general help[/blue]")
-        logger.exception("Query command failed with unexpected error")
+        logger.error("command_failed", command="query", error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 
