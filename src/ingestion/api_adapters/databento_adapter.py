@@ -255,40 +255,88 @@ class DatabentoAdapter(BaseAdapter):
         self,
         start_date: str,
         end_date: str,
-        chunk_interval_days: Optional[int]
+        chunk_interval_days: Optional[int],
+        enable_market_calendar: bool = False,
+        exchange_name: str = "NYSE"
     ) -> List[tuple[str, str]]:
         """
-        Generate date chunks for processing large date ranges.
+        Generate date chunks for processing large date ranges with optional market calendar filtering.
 
         Args:
             start_date: Start date in ISO format
             end_date: End date in ISO format
             chunk_interval_days: Number of days per chunk, None for no chunking
+            enable_market_calendar: Whether to filter chunks based on trading days
+            exchange_name: Exchange name for market calendar (e.g., NYSE, CME_Equity)
 
         Returns:
-            List of (start_date, end_date) tuples for each chunk
+            List of (start_date, end_date) tuples for each chunk, optionally filtered for trading days
         """
         if not chunk_interval_days:
-            return [(start_date, end_date)]
+            chunks = [(start_date, end_date)]
+        else:
+            chunks = []
+            current_start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            final_end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
 
-        chunks = []
-        current_start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-        final_end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            while current_start <= final_end:
+                current_end = min(
+                    current_start + timedelta(days=chunk_interval_days),
+                    final_end
+                )
+                chunks.append((
+                    current_start.isoformat(),
+                    current_end.isoformat()
+                ))
+                current_start = current_end
 
-        while current_start <= final_end:
-            current_end = min(
-                current_start + timedelta(days=chunk_interval_days),
-                final_end
-            )
-            chunks.append((
-                current_start.isoformat(),
-                current_end.isoformat()
-            ))
-            current_start = current_end
+                # Prevent infinite loop when start equals end
+                if current_start == final_end:
+                    break
 
-            # Prevent infinite loop when start equals end
-            if current_start == final_end:
-                break
+        # Apply market calendar filtering if enabled
+        if enable_market_calendar:
+            try:
+                from src.cli.smart_validation import MarketCalendar, PANDAS_MARKET_CALENDARS_AVAILABLE
+                
+                if PANDAS_MARKET_CALENDARS_AVAILABLE:
+                    calendar = MarketCalendar(exchange_name)
+                    filtered_chunks = []
+                    
+                    for chunk_start, chunk_end in chunks:
+                        # Parse chunk dates
+                        start_dt = datetime.fromisoformat(chunk_start.replace('Z', '+00:00')).date()
+                        end_dt = datetime.fromisoformat(chunk_end.replace('Z', '+00:00')).date()
+                        
+                        # Check if chunk contains any trading days
+                        trading_days_count = calendar.get_trading_days_count(start_dt, end_dt)
+                        
+                        if trading_days_count > 0:
+                            filtered_chunks.append((chunk_start, chunk_end))
+                            logger.debug(f"Including chunk {start_dt} to {end_dt} - {trading_days_count} trading days")
+                        else:
+                            logger.info(f"Skipping chunk {start_dt} to {end_dt} - no trading days ({exchange_name})")
+                    
+                    original_count = len(chunks)
+                    filtered_count = len(filtered_chunks)
+                    
+                    if filtered_count < original_count:
+                        savings_pct = ((original_count - filtered_count) / original_count) * 100
+                        logger.info(f"Market calendar filtering: {original_count} → {filtered_count} chunks "
+                                  f"({savings_pct:.1f}% API cost reduction)",
+                                  exchange=exchange_name, 
+                                  original_chunks=original_count,
+                                  filtered_chunks=filtered_count)
+                    
+                    chunks = filtered_chunks
+                else:
+                    logger.warning("Market calendar filtering requested but pandas-market-calendars not available")
+                    
+            except Exception as e:
+                logger.warning(f"Market calendar filtering failed: {e}", 
+                             exchange=exchange_name, 
+                             error=str(e))
+                logger.info("Continuing with original chunks (no filtering applied)")
 
         logger.info(f"Generated {len(chunks)} date chunks", chunks=len(chunks))
         return chunks
@@ -730,7 +778,28 @@ class DatabentoAdapter(BaseAdapter):
         # Normalize schema first to handle aliases
         normalized_schema = self._normalize_schema(schema)
         
-        date_chunks = self._generate_date_chunks(start_date, end_date, chunk_interval_days)
+        # Extract market calendar settings from job config 
+        enable_market_calendar = job_config.get("enable_market_calendar_filtering", False)
+        exchange_name = job_config.get("exchange_name")
+        
+        # Intelligent exchange detection if not explicitly provided
+        if enable_market_calendar and not exchange_name:
+            try:
+                from src.cli.exchange_mapping import map_symbols_to_exchange
+                symbol_list = symbols if isinstance(symbols, list) else [symbols]
+                exchange_name, confidence = map_symbols_to_exchange(symbol_list, "NYSE")
+                fetch_logger.info(f"Auto-detected exchange for calendar filtering",
+                                exchange=exchange_name, 
+                                confidence=confidence,
+                                symbols=symbol_list)
+            except Exception as e:
+                fetch_logger.warning(f"Failed to auto-detect exchange: {e}")
+                exchange_name = "NYSE"
+        elif not exchange_name:
+            exchange_name = "NYSE"
+        
+        date_chunks = self._generate_date_chunks(start_date, end_date, chunk_interval_days, 
+                                                enable_market_calendar, exchange_name)
 
         model_cls = DATABENTO_SCHEMA_MODEL_MAPPING.get(normalized_schema)
         if not model_cls:

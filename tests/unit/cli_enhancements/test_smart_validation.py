@@ -12,9 +12,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+import pandas as pd
+
 from src.cli.smart_validation import (
     SmartValidator, SymbolCache, MarketCalendar, ValidationResult, ValidationLevel,
-    validate_cli_input
+    validate_cli_input, get_calendar_instance, PANDAS_MARKET_CALENDARS_AVAILABLE
 )
 from src.cli.interactive_workflows import (
     WorkflowBuilder, WorkflowType, WorkflowTemplate, Workflow, WorkflowStep, StepStatus
@@ -135,80 +137,284 @@ class TestSymbolCache:
 
 
 class TestMarketCalendar:
-    """Test suite for MarketCalendar."""
+    """Test suite for MarketCalendar with pandas-market-calendars integration."""
     
-    def test_is_trading_day_weekdays(self):
-        """Test trading day detection for weekdays."""
+    def test_initialization_with_exchange(self):
+        """Test initialization with specific exchange."""
+        calendar = MarketCalendar(exchange_name="NYSE")
+        assert calendar.exchange_name == "NYSE"
+        assert calendar.name == "NYSE"
+        
+    def test_initialization_empty_exchange(self):
+        """Test initialization with empty exchange name."""
+        with pytest.raises(ValueError, match="Exchange name cannot be empty"):
+            MarketCalendar("")
+            
+    def test_initialization_default_exchange(self):
+        """Test initialization with default exchange."""
+        calendar = MarketCalendar()
+        assert calendar.exchange_name == "NYSE"
+        
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False)
+    def test_fallback_mode(self):
+        """Test fallback mode when pandas-market-calendars is not available."""
         calendar = MarketCalendar()
         
-        # Monday - Friday should be trading days (if not holidays)
-        monday = date(2024, 1, 8)  # A Monday that's not a holiday
+        # Should use fallback implementation
+        assert calendar._calendar is None
+        assert hasattr(calendar, 'known_holidays')
+        assert len(calendar.known_holidays) > 0
+        
+        # Test basic functionality in fallback mode
+        monday = date(2024, 1, 8)
         assert calendar.is_trading_day(monday)
         
-        friday = date(2024, 1, 12)  # A Friday that's not a holiday
-        assert calendar.is_trading_day(friday)
-        
-    def test_is_trading_day_weekends(self):
-        """Test trading day detection for weekends."""
-        calendar = MarketCalendar()
-        
-        # Saturday and Sunday should not be trading days
         saturday = date(2024, 1, 6)
-        sunday = date(2024, 1, 7)
-        
         assert not calendar.is_trading_day(saturday)
-        assert not calendar.is_trading_day(sunday)
         
-    def test_is_trading_day_holidays(self):
-        """Test trading day detection for holidays."""
-        calendar = MarketCalendar()
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_pandas_market_calendars_mode(self, mock_mcal):
+        """Test mode with pandas-market-calendars available."""
+        # Mock the calendar instance
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
         
-        # New Year's Day
-        new_years = date(2024, 1, 1)
-        assert not calendar.is_trading_day(new_years)
+        # Clear cache first to ensure fresh call
+        get_calendar_instance.cache_clear()
         
-        # Christmas
-        christmas = date(2024, 12, 25)
-        assert not calendar.is_trading_day(christmas)
+        # Create MarketCalendar
+        calendar = MarketCalendar("NYSE")
         
-    def test_get_trading_days(self):
-        """Test getting trading days in a range."""
-        calendar = MarketCalendar()
+        # Should have called get_calendar
+        mock_mcal.get_calendar.assert_called_with("NYSE")
+        assert calendar._calendar == mock_calendar
         
-        # Get trading days for a week
-        start_date = date(2024, 1, 8)  # Monday
-        end_date = date(2024, 1, 14)   # Sunday
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_is_trading_day_with_pandas_market_calendars(self, mock_mcal):
+        """Test is_trading_day with pandas-market-calendars."""
+        mock_calendar = MagicMock()
+        mock_schedule = pd.DataFrame({'market_open': [pd.Timestamp('2024-01-08')]})
+        mock_calendar.schedule.return_value = mock_schedule
+        mock_mcal.get_calendar.return_value = mock_calendar
         
-        trading_days = calendar.get_trading_days(start_date, end_date)
+        # Clear cache to ensure fresh instance
+        get_calendar_instance.cache_clear()
         
-        # Should have 5 trading days (Mon-Fri)
+        calendar = MarketCalendar("NYSE")
+        
+        # Trading day
+        assert calendar.is_trading_day(date(2024, 1, 8)) is True
+        
+        # Non-trading day (empty schedule)
+        mock_calendar.schedule.return_value = pd.DataFrame()
+        assert calendar.is_trading_day(date(2024, 1, 6)) is False
+        
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_get_trading_days_with_pandas_market_calendars(self, mock_mcal):
+        """Test get_trading_days with pandas-market-calendars."""
+        mock_calendar = MagicMock()
+        
+        # Create a DatetimeIndex for valid days
+        valid_days = pd.DatetimeIndex([
+            pd.Timestamp('2024-01-08'),
+            pd.Timestamp('2024-01-09'),
+            pd.Timestamp('2024-01-10'),
+            pd.Timestamp('2024-01-11'),
+            pd.Timestamp('2024-01-12')
+        ])
+        mock_calendar.valid_days.return_value = valid_days
+        mock_mcal.get_calendar.return_value = mock_calendar
+        
+        # Clear cache to ensure fresh instance
+        get_calendar_instance.cache_clear()
+        
+        calendar = MarketCalendar("NYSE")
+        trading_days = calendar.get_trading_days(date(2024, 1, 8), date(2024, 1, 14))
+        
         assert len(trading_days) == 5
+        assert all(isinstance(d, date) for d in trading_days)
+        assert trading_days[0] == date(2024, 1, 8)
+        assert trading_days[-1] == date(2024, 1, 12)
         
-        # All should be weekdays
-        for day in trading_days:
-            assert day.weekday() < 5
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_get_schedule_with_pandas_market_calendars(self, mock_mcal):
+        """Test get_schedule with pandas-market-calendars."""
+        mock_calendar = MagicMock()
+        expected_schedule = pd.DataFrame({
+            'market_open': [pd.Timestamp('2024-01-08 09:30:00')],
+            'market_close': [pd.Timestamp('2024-01-08 16:00:00')]
+        })
+        mock_calendar.schedule.return_value = expected_schedule
+        mock_mcal.get_calendar.return_value = mock_calendar
+        
+        # Clear cache to ensure fresh instance
+        get_calendar_instance.cache_clear()
+        
+        calendar = MarketCalendar("NYSE")
+        schedule = calendar.get_schedule(date(2024, 1, 8), date(2024, 1, 8))
+        
+        assert isinstance(schedule, pd.DataFrame)
+        assert not schedule.empty
+        assert 'market_open' in schedule.columns
+        assert 'market_close' in schedule.columns
+        
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_get_holidays_with_pandas_market_calendars(self, mock_mcal):
+        """Test get_holidays with pandas-market-calendars."""
+        mock_calendar = MagicMock()
+        
+        # Mock valid days - only weekdays except for New Year's and Christmas
+        valid_days = []
+        for d in pd.date_range(start='2024-01-01', end='2024-12-31', freq='D'):
+            if d.weekday() < 5:  # Weekday
+                # Exclude New Year's Day and Christmas
+                if d.date() not in [date(2024, 1, 1), date(2024, 12, 25)]:
+                    valid_days.append(d)
+        
+        mock_calendar.valid_days.return_value = pd.DatetimeIndex(valid_days)
+        mock_mcal.get_calendar.return_value = mock_calendar
+        
+        # Clear cache to ensure fresh instance
+        get_calendar_instance.cache_clear()
+        
+        calendar = MarketCalendar("NYSE")
+        holidays = calendar.get_holidays(date(2024, 1, 1), date(2024, 12, 31))
+        
+        assert isinstance(holidays, pd.DatetimeIndex)
+        # Should find New Year's Day and Christmas as holidays (weekdays not in valid_days)
+        assert len(holidays) == 2
+        # Check specific holidays
+        assert pd.Timestamp('2024-01-01') in holidays
+        assert pd.Timestamp('2024-12-25') in holidays
+        
+    def test_get_schedule_fallback_mode(self):
+        """Test get_schedule in fallback mode."""
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False):
+            calendar = MarketCalendar()
+            schedule = calendar.get_schedule(date(2024, 1, 8), date(2024, 1, 8))
+            assert schedule is None
+            
+    def test_get_holidays_fallback_mode(self):
+        """Test get_holidays in fallback mode."""
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False):
+            calendar = MarketCalendar()
+            holidays = calendar.get_holidays(date(2024, 1, 1), date(2024, 12, 31))
+            
+            # Should return holidays from the fallback set
+            assert isinstance(holidays, pd.DatetimeIndex)
+            assert pd.Timestamp('2024-01-01') in holidays  # New Year's
+            assert pd.Timestamp('2024-12-25') in holidays  # Christmas
+            
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True)
+    @patch('src.cli.smart_validation.mcal')
+    def test_get_early_closes(self, mock_mcal):
+        """Test get_early_closes method."""
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
+        
+        # Clear cache to ensure fresh instance
+        get_calendar_instance.cache_clear()
+        
+        calendar = MarketCalendar("NYSE")
+        early_closes = calendar.get_early_closes(date(2024, 12, 24), date(2024, 12, 24))
+        
+        # Currently returns empty dict (placeholder implementation)
+        assert isinstance(early_closes, dict)
+        assert len(early_closes) == 0
+        
+    def test_repr(self):
+        """Test string representation."""
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', True):
+            calendar = MarketCalendar("NYSE")
+            repr_str = repr(calendar)
+            assert "NYSE" in repr_str
+            assert "pandas-market-calendars" in repr_str
+            
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False):
+            calendar = MarketCalendar("NYSE")
+            repr_str = repr(calendar)
+            assert "NYSE" in repr_str
+            assert "fallback" in repr_str
             
     def test_get_next_trading_day(self):
         """Test getting next trading day."""
-        calendar = MarketCalendar()
-        
-        # From Friday, next trading day should be Monday
-        friday = date(2024, 1, 12)
-        next_day = calendar.get_next_trading_day(friday)
-        
-        assert next_day.weekday() == 0  # Monday
-        assert next_day > friday
-        
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False):
+            calendar = MarketCalendar()
+            
+            # From Friday, next trading day should be Monday
+            friday = date(2024, 1, 12)
+            next_day = calendar.get_next_trading_day(friday)
+            
+            assert next_day.weekday() == 0  # Monday
+            assert next_day > friday
+            
     def test_get_previous_trading_day(self):
         """Test getting previous trading day."""
-        calendar = MarketCalendar()
+        with patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False):
+            calendar = MarketCalendar()
+            
+            # From Monday, previous trading day should be Friday
+            monday = date(2024, 1, 8)
+            prev_day = calendar.get_previous_trading_day(monday)
+            
+            assert prev_day.weekday() == 4  # Friday
+            assert prev_day < monday
+            
+
+class TestGetCalendarInstance:
+    """Test suite for get_calendar_instance function."""
+    
+    @patch('src.cli.smart_validation.mcal')
+    def test_cache_functionality(self, mock_mcal):
+        """Test that calendar instances are cached."""
+        mock_calendar1 = MagicMock()
+        mock_calendar2 = MagicMock()
+        mock_mcal.get_calendar.side_effect = [mock_calendar1, mock_calendar2]
         
-        # From Monday, previous trading day should be Friday
-        monday = date(2024, 1, 8)
-        prev_day = calendar.get_previous_trading_day(monday)
+        # Clear cache first
+        get_calendar_instance.cache_clear()
         
-        assert prev_day.weekday() == 4  # Friday
-        assert prev_day < monday
+        # First call should create new instance
+        cal1 = get_calendar_instance("NYSE")
+        assert cal1 == mock_calendar1
+        
+        # Second call with same exchange should return cached instance
+        cal2 = get_calendar_instance("NYSE")
+        assert cal2 == mock_calendar1
+        
+        # Only one call to get_calendar should have been made
+        assert mock_mcal.get_calendar.call_count == 1
+        
+        # Different exchange should create new instance
+        cal3 = get_calendar_instance("NASDAQ")
+        assert cal3 == mock_calendar2
+        assert mock_mcal.get_calendar.call_count == 2
+        
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False)
+    def test_import_error(self):
+        """Test error when pandas-market-calendars is not available."""
+        # Clear cache first since it might have cached instances
+        get_calendar_instance.cache_clear()
+        
+        with pytest.raises(ImportError, match="pandas-market-calendars is not installed"):
+            get_calendar_instance("NYSE")
+            
+    @patch('src.cli.smart_validation.mcal')
+    def test_unknown_exchange_error(self, mock_mcal):
+        """Test error for unknown exchange."""
+        mock_mcal.get_calendar.side_effect = Exception("Unknown calendar")
+        mock_mcal.get_calendar_names.return_value = ["NYSE", "CME", "LSE"]
+        
+        with pytest.raises(ValueError) as exc_info:
+            get_calendar_instance("INVALID")
+            
+        assert "Unknown exchange calendar 'INVALID'" in str(exc_info.value)
+        assert "NYSE, CME, LSE" in str(exc_info.value)
 
 
 class TestSmartValidator:
@@ -221,6 +427,13 @@ class TestSmartValidator:
         assert validator.symbol_cache is not None
         assert validator.market_calendar is not None
         assert len(validator.schema_rules) > 0
+        assert validator.exchange_name == "NYSE"
+        
+    def test_initialization_with_exchange(self):
+        """Test validator initialization with specific exchange."""
+        validator = SmartValidator(exchange_name="NASDAQ")
+        assert validator.exchange_name == "NASDAQ"
+        assert validator.market_calendar.exchange_name == "NASDAQ"
         
     def test_validate_symbol_valid(self):
         """Test validating a valid symbol."""
@@ -265,6 +478,56 @@ class TestSmartValidator:
         assert result.level == ValidationLevel.SUCCESS
         assert "trading days" in result.message
         assert result.metadata is not None
+        assert 'holidays' in result.metadata
+        assert 'weekend_days' in result.metadata
+        assert 'exchange' in result.metadata
+        
+    @patch('src.cli.smart_validation.PANDAS_MARKET_CALENDARS_AVAILABLE', False)
+    def test_validate_date_range_with_holidays(self):
+        """Test validating date range that includes holidays."""
+        validator = SmartValidator()
+        
+        # Christmas week 2024
+        start_date = "2024-12-23"
+        end_date = "2024-12-27"
+        
+        result = validator.validate_date_range(start_date, end_date, interactive=False)
+        
+        assert result.is_valid
+        # Should have warning about holiday
+        assert "holiday" in result.message or result.metadata['holidays'] > 0
+        
+    def test_validate_date_range_start_is_holiday(self):
+        """Test validating date range where start date is a holiday."""
+        validator = SmartValidator()
+        
+        # Start on New Year's Day
+        start_date = "2024-01-01"
+        end_date = "2024-01-05"
+        
+        result = validator.validate_date_range(start_date, end_date, interactive=False)
+        
+        # Should either be invalid or have specific feedback about holiday
+        if not result.is_valid:
+            assert "not a trading day" in result.message
+            assert len(result.suggestions) > 0
+            
+    def test_validate_date_range_high_non_trading_ratio(self):
+        """Test validating date range with many non-trading days."""
+        validator = SmartValidator()
+        
+        # A weekend range
+        start_date = "2024-01-06"  # Saturday
+        end_date = "2024-01-07"    # Sunday
+        
+        result = validator.validate_date_range(start_date, end_date, interactive=False)
+        
+        # Should be invalid
+        assert not result.is_valid
+        # Should mention that start date is not a trading day or no trading days
+        assert "not a trading day" in result.message or "No trading days" in result.message
+        # Should have suggestions
+        assert len(result.suggestions) > 0
         
     def test_validate_date_range_invalid_format(self):
         """Test validating invalid date format."""

@@ -507,9 +507,72 @@ def query(
         date_valid, date_msg = validate_date_range(start_date, end_date)
         if not date_valid:
             console.print(f"❌ [red]Error: {date_msg}[/red]")
-            console.print("\n📅 [yellow]Suggested date ranges:[/yellow]")
-            console.print(suggest_date_range())
             raise typer.Exit(1)
+
+        # Market calendar pre-flight check for query optimization
+        if not dry_run:
+            try:
+                from cli.smart_validation import SmartValidator
+                
+                # Determine appropriate exchange using intelligent mapping
+                exchange = "NYSE"  # Default fallback
+                if parsed_symbols:
+                    from cli.exchange_mapping import map_symbols_to_exchange
+                    exchange, confidence = map_symbols_to_exchange(parsed_symbols, "NYSE")
+                    console.print(f"🎯 [cyan]Auto-detected exchange: {exchange} (confidence: {confidence:.2f})[/cyan]")
+                
+                # Create validator and analyze date range
+                validator = SmartValidator(exchange_name=exchange)
+                
+                validation_result = validator.validate_date_range(start_date_obj, end_date_obj)
+                
+                # Extract trading day coverage
+                coverage_pct = validation_result.metadata.get('coverage_ratio', 0) * 100
+                trading_days = validation_result.metadata.get('trading_days', 0)
+                total_days = validation_result.metadata.get('total_days', 0)
+                
+                # Show pre-flight analysis for query
+                console.print(f"\n📅 [bold cyan]Market Calendar Pre-flight Analysis ({exchange}):[/bold cyan]")
+                console.print(f"Date Range: {start_date} to {end_date}")
+                console.print(f"Trading Days: {trading_days}/{total_days} ({coverage_pct:.1f}% coverage)")
+                
+                # Warning if coverage is low
+                if coverage_pct < 30:
+                    console.print("[red]⚠️  WARNING: Very low trading day coverage![/red]")
+                    console.print(f"[red]   Query may return sparse data: ~{100-coverage_pct:.0f}% of requested period has no trading[/red]")
+                    console.print(f"[yellow]   Consider using: python main.py market-calendar {start_date} {end_date} --exchange {exchange} --holidays[/yellow]")
+                    
+                    if not validate_only:
+                        continue_anyway = typer.confirm("Continue with this date range anyway?")
+                        if not continue_anyway:
+                            console.print("💡 [cyan]Tips for better query ranges:[/cyan]")
+                            console.print("   • Use python main.py market-calendar to analyze dates first")
+                            console.print("   • Consider focusing on trading days only")
+                            console.print("   • Exclude major holiday periods")
+                            raise typer.Exit(0)
+                        
+                elif coverage_pct < 60:
+                    console.print("[yellow]⚠️  Moderate trading day coverage - query may have gaps[/yellow]")
+                    console.print(f"[blue]💡 Consider focusing on trading-heavy periods for better data density[/blue]")
+                else:
+                    console.print("[green]✅ Good trading day coverage for comprehensive data[/green]")
+
+                # Check for early closes in the date range
+                try:
+                    early_closes = validator.market_calendar.get_early_closes(start_date_obj, end_date_obj)
+                    if early_closes:
+                        console.print(f"\n🕐 [yellow]Early Market Closes Detected ({len(early_closes)}):[/yellow]")
+                        for close_date, close_info in sorted(early_closes.items()):
+                            date_str = close_date.strftime("%Y-%m-%d (%a)")
+                            console.print(f"   • {date_str}: {close_info}")
+                        console.print("[blue]💡 Early closes may result in partial trading data for these dates[/blue]")
+                except Exception:
+                    pass  # Don't fail if early close detection fails
+                    
+            except Exception as e:
+                # Don't fail the entire command if pre-flight check fails
+                console.print(f"[yellow]⚠️  Could not perform market calendar analysis: {e}[/yellow]")
+                console.print("[yellow]   Continuing with query...[/yellow]")
 
         # Validate schema
         if schema not in SCHEMA_MAPPING:
@@ -806,6 +869,75 @@ def ingest(
             if not date_valid:
                 console.print(f"❌ [red]Error: {date_msg}[/red]")
                 raise typer.Exit(1)
+
+        # Market calendar pre-flight check for cost optimization
+        if start_date and end_date and not dry_run:
+            try:
+                from cli.smart_validation import SmartValidator
+                from datetime import datetime
+                
+                # Determine appropriate exchange using intelligent mapping
+                exchange = "NYSE"  # Default fallback
+                if symbols:
+                    symbol_list = parse_symbols(symbols) if isinstance(symbols, str) else symbols
+                    from cli.exchange_mapping import map_symbols_to_exchange
+                    exchange, confidence = map_symbols_to_exchange(symbol_list, "NYSE")
+                    console.print(f"🎯 [cyan]Auto-detected exchange: {exchange} (confidence: {confidence:.2f})[/cyan]")
+                
+                # Create validator and analyze date range
+                validator = SmartValidator(exchange_name=exchange)
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+                
+                validation_result = validator.validate_date_range(start_dt, end_dt)
+                
+                # Extract trading day coverage
+                coverage_pct = validation_result.metadata.get('coverage_ratio', 0) * 100
+                trading_days = validation_result.metadata.get('trading_days', 0)
+                total_days = validation_result.metadata.get('total_days', 0)
+                
+                # Show pre-flight analysis
+                console.print(f"\n📅 [bold cyan]Market Calendar Pre-flight Analysis ({exchange}):[/bold cyan]")
+                console.print(f"Date Range: {start_date} to {end_date}")
+                console.print(f"Trading Days: {trading_days}/{total_days} ({coverage_pct:.1f}% coverage)")
+                
+                # Warning if coverage is low
+                if coverage_pct < 30:
+                    console.print("[red]⚠️  WARNING: Very low trading day coverage![/red]")
+                    console.print(f"[red]   Potential API cost waste: ~{100-coverage_pct:.0f}% of requests may return no data[/red]")
+                    console.print(f"[yellow]   Consider using: python main.py market-calendar {start_date} {end_date} --exchange {exchange} --holidays[/yellow]")
+                    
+                    if not force:
+                        continue_anyway = typer.confirm("Continue with this date range anyway?")
+                        if not continue_anyway:
+                            console.print("💡 [cyan]Tips for better date ranges:[/cyan]")
+                            console.print("   • Use python main.py market-calendar to analyze dates first")
+                            console.print("   • Consider excluding holiday periods")
+                            console.print("   • Focus on periods with high trading activity")
+                            raise typer.Exit(0)
+                        
+                elif coverage_pct < 60:
+                    console.print("[yellow]⚠️  Moderate trading day coverage - consider optimization[/yellow]")
+                    console.print(f"[blue]💰 Potential API savings: ~{100-coverage_pct:.0f}% by excluding non-trading days[/blue]")
+                else:
+                    console.print("[green]✅ Good trading day coverage for API efficiency[/green]")
+
+                # Check for early closes in the date range
+                try:
+                    early_closes = validator.market_calendar.get_early_closes(start_dt, end_dt)
+                    if early_closes:
+                        console.print(f"\n🕐 [yellow]Early Market Closes Detected ({len(early_closes)}):[/yellow]")
+                        for close_date, close_info in sorted(early_closes.items()):
+                            date_str = close_date.strftime("%Y-%m-%d (%a)")
+                            console.print(f"   • {date_str}: {close_info}")
+                        console.print("[blue]💡 Early closes may affect data completeness for intraday schemas[/blue]")
+                except Exception:
+                    pass  # Don't fail if early close detection fails
+                    
+            except Exception as e:
+                # Don't fail the entire command if pre-flight check fails
+                console.print(f"[yellow]⚠️  Could not perform market calendar analysis: {e}[/yellow]")
+                console.print("[yellow]   Continuing with ingestion...[/yellow]")
 
         # Build overrides dictionary for custom parameters
         overrides = {}
@@ -1265,6 +1397,411 @@ def cheatsheet():
     - Pro tips for efficient usage
     """
     CheatSheet.display()
+
+
+@app.command("market-calendar")
+def market_calendar(
+    start_date: str = typer.Argument(..., help="Start date (YYYY-MM-DD)"),
+    end_date: str = typer.Argument(..., help="End date (YYYY-MM-DD)"),
+    exchange: str = typer.Option("NYSE", help="Exchange name (NYSE, NASDAQ, CME_Equity, CME_Energy, LSE, etc.)"),
+    show_holidays: bool = typer.Option(False, "--holidays", help="Show individual holidays in the date range"),
+    show_schedule: bool = typer.Option(False, "--schedule", help="Show market open/close schedule"),
+    coverage_only: bool = typer.Option(False, "--coverage", help="Show only coverage summary"),
+    list_exchanges: bool = typer.Option(False, "--list-exchanges", help="List all available exchanges")
+):
+    """
+    Market calendar analysis and trading day validation.
+    
+    Analyzes date ranges for trading days, holidays, and market coverage using
+    pandas-market-calendars for accurate exchange-aware scheduling.
+    
+    Examples:
+        # Basic coverage analysis
+        python main.py market-calendar 2024-01-01 2024-01-31
+        
+        # CME Energy calendar analysis with holidays
+        python main.py market-calendar 2024-01-01 2024-01-31 --exchange CME_Energy --holidays
+        
+        # Show market schedule for specific dates
+        python main.py market-calendar 2024-12-23 2024-12-27 --schedule
+        
+        # Quick coverage check for API cost estimation
+        python main.py market-calendar 2024-01-01 2024-12-31 --coverage
+        
+        # List all available exchanges
+        python main.py market-calendar 2024-01-01 2024-01-02 --list-exchanges
+    """
+    from cli.smart_validation import MarketCalendar, PANDAS_MARKET_CALENDARS_AVAILABLE
+    from datetime import datetime
+    
+    try:
+        # Handle listing exchanges
+        if list_exchanges:
+            console.print("\n📅 [bold cyan]Available Market Calendars:[/bold cyan]\n")
+            if PANDAS_MARKET_CALENDARS_AVAILABLE:
+                try:
+                    import pandas_market_calendars as mcal
+                    available = mcal.get_calendar_names()
+                    console.print("Exchange calendars available through pandas-market-calendars:")
+                    for exchange_name in sorted(available):
+                        console.print(f"  • {exchange_name}")
+                    console.print(f"\nTotal: {len(available)} exchanges available")
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Could not list exchanges: {e}[/yellow]")
+                    console.print("Common exchanges: NYSE, NASDAQ, CME_Equity, CME_Energy, LSE, TSX")
+            else:
+                console.print("[yellow]pandas-market-calendars not installed. Using fallback calendar.[/yellow]")
+                console.print("Available: NYSE (default fallback)")
+            return
+
+        # Parse and validate dates
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+            
+            if start_dt >= end_dt:
+                console.print("[red]Error: Start date must be before end date[/red]")
+                raise typer.Exit(1)
+                
+        except ValueError as e:
+            console.print(f"[red]Error: Invalid date format. Use YYYY-MM-DD. {e}[/red]")
+            raise typer.Exit(1)
+
+        # Create market calendar
+        try:
+            calendar = MarketCalendar(exchange)
+            console.print(f"\n📅 [bold cyan]Market Calendar Analysis: {calendar.name}[/bold cyan]")
+            console.print(f"Date Range: {start_date} to {end_date}")
+            console.print(f"Exchange: {exchange}")
+            
+        except Exception as e:
+            console.print(f"[red]Error: Could not create calendar for {exchange}: {e}[/red]")
+            if PANDAS_MARKET_CALENDARS_AVAILABLE:
+                console.print("Try --list-exchanges to see available options")
+            raise typer.Exit(1)
+
+        # Get basic date range analysis
+        total_days = (end_dt - start_dt).days + 1
+        trading_days = calendar.get_trading_days_count(start_dt, end_dt)
+        
+        if not coverage_only:
+            console.print(f"\n📊 [bold]Summary:[/bold]")
+        
+        console.print(f"Total days: {total_days}")
+        console.print(f"Trading days: {trading_days}")
+        console.print(f"Non-trading days: {total_days - trading_days}")
+        
+        if total_days > 0:
+            coverage_pct = (trading_days / total_days) * 100
+            console.print(f"Trading day coverage: {coverage_pct:.1f}%")
+            
+            # Coverage-based feedback
+            if coverage_pct < 20:
+                console.print("[red]⚠️  Very low trading day coverage - consider adjusting date range[/red]")
+            elif coverage_pct < 50:
+                console.print("[yellow]⚠️  Low trading day coverage - may want to adjust date range[/yellow]")
+            elif coverage_pct > 85:
+                console.print("[green]✅ Excellent trading day coverage[/green]")
+            else:
+                console.print("[blue]ℹ️  Good trading day coverage[/blue]")
+
+        if coverage_only:
+            return
+
+        # Show holidays if requested
+        if show_holidays and PANDAS_MARKET_CALENDARS_AVAILABLE:
+            try:
+                holidays = calendar.get_holidays(start_dt, end_dt)
+                if len(holidays) > 0:
+                    console.print(f"\n🏖️  [bold]Holidays ({len(holidays)}):[/bold]")
+                    for holiday in holidays:
+                        # Format holiday date
+                        holiday_str = holiday.strftime("%Y-%m-%d (%A)")
+                        console.print(f"  • {holiday_str}")
+                else:
+                    console.print(f"\n🏖️  [bold]Holidays:[/bold] None in this date range")
+            except Exception as e:
+                console.print(f"[yellow]Could not retrieve holidays: {e}[/yellow]")
+
+        # Show early closes
+        try:
+            early_closes = calendar.get_early_closes(start_dt, end_dt)
+            if early_closes:
+                console.print(f"\n🕐 [bold]Early Market Closes ({len(early_closes)}):[/bold]")
+                for close_date, close_info in sorted(early_closes.items()):
+                    date_str = close_date.strftime("%Y-%m-%d (%A)")
+                    console.print(f"  • {date_str}: {close_info}")
+            elif not coverage_only:
+                console.print(f"\n🕐 [bold]Early Market Closes:[/bold] None in this date range")
+        except Exception as e:
+            console.print(f"[yellow]Could not retrieve early closes: {e}[/yellow]")
+
+        # Show market schedule if requested  
+        if show_schedule and PANDAS_MARKET_CALENDARS_AVAILABLE:
+            try:
+                schedule_df = calendar.get_schedule(start_dt, end_dt)
+                if not schedule_df.empty:
+                    console.print(f"\n🕐 [bold]Market Schedule (first 10 days):[/bold]")
+                    
+                    # Create table for schedule display
+                    table = Table()
+                    table.add_column("Date", style="cyan")
+                    table.add_column("Market Open", style="green")
+                    table.add_column("Market Close", style="red")
+                    
+                    # Show first 10 days to avoid overwhelming output
+                    for idx, (date, row) in enumerate(schedule_df.head(10).iterrows()):
+                        if hasattr(row, 'market_open') and hasattr(row, 'market_close'):
+                            open_time = row.market_open.strftime("%H:%M") if pd.notna(row.market_open) else "N/A"
+                            close_time = row.market_close.strftime("%H:%M") if pd.notna(row.market_close) else "N/A" 
+                        else:
+                            open_time = "N/A"
+                            close_time = "N/A"
+                        
+                        date_str = date.strftime("%Y-%m-%d (%a)")
+                        table.add_row(date_str, open_time, close_time)
+                    
+                    console.print(table)
+                    
+                    if len(schedule_df) > 10:
+                        console.print(f"... and {len(schedule_df) - 10} more trading days")
+                else:
+                    console.print(f"\n🕐 [bold]Market Schedule:[/bold] No trading days in this range")
+            except Exception as e:
+                console.print(f"[yellow]Could not retrieve market schedule: {e}[/yellow]")
+
+        # API cost estimation
+        if not coverage_only:
+            console.print(f"\n💰 [bold]API Cost Estimation:[/bold]")
+            if coverage_pct < 50:
+                savings_pct = (100 - coverage_pct) / 100 * 100
+                console.print(f"Potential API cost savings: ~{savings_pct:.0f}% by filtering non-trading days")
+            else:
+                console.print("Good date range efficiency for API usage")
+                
+        console.print(f"\n✅ [green]Analysis complete for {exchange} exchange[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]Error during market calendar analysis: {e}[/red]")
+        logger.error(f"Market calendar command failed: {e}", exc_info=True)
+        raise typer.Exit(1)
+
+
+@app.command("exchange-mapping")
+def exchange_mapping(
+    symbols: Optional[str] = typer.Argument(None, help="Comma-separated symbols to analyze (optional)"),
+    list_exchanges: bool = typer.Option(False, "--list", help="List all supported exchanges"),
+    show_mappings: bool = typer.Option(False, "--mappings", help="Show all mapping rules"),
+    exchange_info: Optional[str] = typer.Option(None, "--info", help="Get detailed info about a specific exchange"),
+    test_symbol: Optional[str] = typer.Option(None, "--test", help="Test mapping for a single symbol"),
+    confidence_threshold: float = typer.Option(0.0, "--min-confidence", help="Minimum confidence threshold for results")
+):
+    """
+    Intelligent symbol-to-exchange mapping analysis and testing.
+    
+    Analyzes financial symbols and automatically determines the most appropriate
+    market calendar exchange. Useful for understanding how the system maps symbols
+    and for debugging exchange detection issues.
+    
+    Examples:
+        # Analyze multiple symbols
+        python main.py exchange-mapping "ES.FUT,CL.c.0,SPY,AAPL"
+        
+        # Test individual symbol mapping
+        python main.py exchange-mapping --test "NG.FUT"
+        
+        # List all supported exchanges
+        python main.py exchange-mapping --list
+        
+        # Get detailed exchange information
+        python main.py exchange-mapping --info CME_Energy
+        
+        # Show all mapping rules
+        python main.py exchange-mapping --mappings
+        
+        # Filter results by confidence
+        python main.py exchange-mapping "SPY,UNKNOWN" --min-confidence 0.8
+    """
+    from cli.exchange_mapping import get_exchange_mapper
+    
+    try:
+        mapper = get_exchange_mapper()
+        
+        # Handle listing all exchanges
+        if list_exchanges:
+            console.print("\n🏛️  [bold cyan]Supported Exchange Calendars:[/bold cyan]\n")
+            
+            exchanges = set()
+            for mapping in mapper.mappings:
+                exchanges.add(mapping.exchange)
+            
+            for exchange in sorted(exchanges):
+                info = mapper.get_exchange_info(exchange)
+                console.print(f"📊 [bold]{exchange}[/bold]")
+                console.print(f"   Name: {info['name']}")
+                console.print(f"   Region: {info['region']}")
+                console.print(f"   Asset Classes: {', '.join(info['asset_classes'])}")
+                console.print(f"   Trading Hours: {info['trading_hours']}")
+                
+                # Show example symbols
+                examples = mapper.suggest_symbols_for_exchange(exchange, 3)
+                if examples:
+                    console.print(f"   Examples: {', '.join(examples)}")
+                console.print()
+            
+            console.print(f"Total: {len(exchanges)} exchange calendars supported")
+            return
+
+        # Handle exchange info request
+        if exchange_info:
+            console.print(f"\n🏛️  [bold cyan]Exchange Information: {exchange_info}[/bold cyan]\n")
+            
+            info = mapper.get_exchange_info(exchange_info)
+            console.print(f"[bold]Name:[/bold] {info['name']}")
+            console.print(f"[bold]Region:[/bold] {info['region']}")
+            console.print(f"[bold]Asset Classes:[/bold] {', '.join(info['asset_classes'])}")
+            console.print(f"[bold]Trading Hours:[/bold] {info['trading_hours']}")
+            console.print(f"[bold]Holidays:[/bold] {info['holidays']}")
+            
+            # Show example symbols for this exchange
+            examples = mapper.suggest_symbols_for_exchange(exchange_info, 10)
+            if examples:
+                console.print(f"\n[bold]Example Symbols:[/bold]")
+                for example in examples:
+                    console.print(f"  • {example}")
+            
+            # Show mapping rules for this exchange
+            console.print(f"\n[bold]Mapping Rules:[/bold]")
+            rules_count = 0
+            for mapping in mapper.mappings:
+                if mapping.exchange == exchange_info:
+                    console.print(f"  • {mapping.description} (confidence: {mapping.confidence:.2f})")
+                    rules_count += 1
+            
+            if rules_count == 0:
+                console.print("  No specific mapping rules found")
+            
+            return
+
+        # Handle showing all mapping rules
+        if show_mappings:
+            console.print("\n📋 [bold cyan]All Symbol Mapping Rules:[/bold cyan]\n")
+            
+            current_exchange = None
+            for mapping in mapper.mappings:
+                if mapping.exchange != current_exchange:
+                    current_exchange = mapping.exchange
+                    console.print(f"\n🏛️  [bold]{current_exchange}[/bold]")
+                
+                console.print(f"   📊 {mapping.description}")
+                console.print(f"      Confidence: {mapping.confidence:.2f}")
+                console.print(f"      Asset Class: {mapping.asset_class.value}")
+                console.print(f"      Pattern: {mapping.pattern}")
+                if mapping.examples:
+                    console.print(f"      Examples: {', '.join(mapping.examples[:3])}")
+                console.print()
+            
+            return
+
+        # Handle single symbol testing
+        if test_symbol:
+            console.print(f"\n🔍 [bold cyan]Testing Symbol: {test_symbol}[/bold cyan]\n")
+            
+            exchange, confidence, mapping_info = mapper.map_symbol_to_exchange(test_symbol)
+            
+            console.print(f"[bold]Result:[/bold] {exchange}")
+            console.print(f"[bold]Confidence:[/bold] {confidence:.2f}")
+            
+            if mapping_info:
+                console.print(f"[bold]Matched Rule:[/bold] {mapping_info.description}")
+                console.print(f"[bold]Asset Class:[/bold] {mapping_info.asset_class.value}")
+                console.print(f"[bold]Region:[/bold] {mapping_info.region.value}")
+                console.print(f"[bold]Pattern:[/bold] {mapping_info.pattern}")
+            else:
+                console.print("[yellow]No specific rule matched - using fallback[/yellow]")
+            
+            # Validate the mapping
+            is_valid, reason = mapper.validate_symbol_exchange_pair(test_symbol, exchange)
+            if is_valid:
+                console.print(f"[green]✅ {reason}[/green]")
+            else:
+                console.print(f"[red]❌ {reason}[/red]")
+            
+            return
+
+        # Handle symbol analysis
+        if symbols:
+            symbol_list = [s.strip() for s in symbols.split(',')]
+            console.print(f"\n🎯 [bold cyan]Symbol Exchange Mapping Analysis[/bold cyan]")
+            console.print(f"Analyzing {len(symbol_list)} symbols...\n")
+            
+            # Create results table
+            table = Table()
+            table.add_column("Symbol", style="cyan")
+            table.add_column("Exchange", style="green") 
+            table.add_column("Confidence", style="yellow")
+            table.add_column("Asset Class", style="blue")
+            table.add_column("Description", style="white")
+            
+            all_mappings = {}
+            for symbol in symbol_list:
+                exchange, confidence, mapping_info = mapper.map_symbol_to_exchange(symbol)
+                
+                # Apply confidence filter
+                if confidence < confidence_threshold:
+                    continue
+                    
+                asset_class = mapping_info.asset_class.value if mapping_info else "unknown"
+                description = mapping_info.description if mapping_info else "fallback mapping"
+                
+                # Color code confidence
+                if confidence >= 0.9:
+                    conf_display = f"[green]{confidence:.2f}[/green]"
+                elif confidence >= 0.7:
+                    conf_display = f"[yellow]{confidence:.2f}[/yellow]"
+                else:
+                    conf_display = f"[red]{confidence:.2f}[/red]"
+                
+                table.add_row(symbol, exchange, conf_display, asset_class, description)
+                all_mappings[symbol] = (exchange, confidence, mapping_info)
+            
+            console.print(table)
+            
+            # Group analysis
+            if len(symbol_list) > 1:
+                console.print(f"\n📊 [bold]Group Analysis:[/bold]")
+                group_exchange, group_confidence, group_mappings = mapper.map_symbols_to_exchange(symbol_list)
+                console.print(f"Best group exchange: {group_exchange}")
+                console.print(f"Average confidence: {group_confidence:.2f}")
+                
+                # Show exchange distribution
+                exchange_counts = {}
+                for symbol, (exchange, conf, mapping) in all_mappings.items():
+                    if conf >= confidence_threshold:
+                        exchange_counts[exchange] = exchange_counts.get(exchange, 0) + 1
+                
+                if exchange_counts:
+                    console.print(f"\nExchange distribution:")
+                    for exchange, count in sorted(exchange_counts.items(), key=lambda x: x[1], reverse=True):
+                        percentage = (count / len([m for m in all_mappings.values() if m[1] >= confidence_threshold])) * 100
+                        console.print(f"  • {exchange}: {count} symbols ({percentage:.1f}%)")
+            
+            return
+
+        # No arguments provided - show usage
+        console.print("\n🎯 [bold cyan]Exchange Mapping Tool[/bold cyan]")
+        console.print("\nThis tool helps analyze and test intelligent symbol-to-exchange mapping.")
+        console.print("\n[bold]Quick Examples:[/bold]")
+        console.print("  python main.py exchange-mapping \"ES.FUT,SPY\"")
+        console.print("  python main.py exchange-mapping --test CL.c.0")
+        console.print("  python main.py exchange-mapping --list")
+        console.print("  python main.py exchange-mapping --info CME_Energy")
+        console.print("\nUse --help for full documentation")
+        
+    except Exception as e:
+        console.print(f"[red]Error during exchange mapping analysis: {e}[/red]")
+        logger.error(f"Exchange mapping command failed: {e}", exc_info=True)
+        raise typer.Exit(1)
 
 
 @app.command()

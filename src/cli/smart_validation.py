@@ -15,6 +15,8 @@ from enum import Enum
 import difflib
 from functools import lru_cache
 
+import pandas as pd
+
 from rich.console import Console
 from rich.prompt import Prompt, Confirm, IntPrompt
 from rich.table import Table
@@ -249,42 +251,101 @@ class SymbolCache:
         return self.symbol_metadata.get(symbol.upper())
 
 
-class MarketCalendar:
-    """Market calendar for date validation and trading day calculations."""
+try:
+    import pandas_market_calendars as mcal
+    PANDAS_MARKET_CALENDARS_AVAILABLE = True
+except ImportError:
+    PANDAS_MARKET_CALENDARS_AVAILABLE = False
+    mcal = None
+
+# Cache for calendar instances to avoid redundant creation
+@lru_cache(maxsize=10)
+def get_calendar_instance(exchange_name: str):
+    """
+    Retrieves and caches a calendar instance to avoid redundant creation.
+    Uses LRU cache for performance.
     
-    def __init__(self):
-        """Initialize market calendar."""
-        self.known_holidays = self._get_known_holidays()
+    Args:
+        exchange_name: The name of the exchange (e.g., 'CME', 'NYSE')
         
-    def _get_known_holidays(self) -> Set[date]:
-        """Get known market holidays.
+    Returns:
+        Calendar instance from pandas-market-calendars
+        
+    Raises:
+        ValueError: If exchange calendar is not found
+    """
+    if not PANDAS_MARKET_CALENDARS_AVAILABLE:
+        raise ImportError("pandas-market-calendars is not installed. Please install it with: pip install pandas-market-calendars")
+    
+    try:
+        return mcal.get_calendar(exchange_name.upper())
+    except Exception as e:
+        # Try to get available calendars for better error message
+        available = mcal.get_calendar_names() if hasattr(mcal, 'get_calendar_names') else []
+        raise ValueError(f"Unknown exchange calendar '{exchange_name}'. Available calendars: {', '.join(available)}") from e
+
+
+class MarketCalendar:
+    """
+    Market calendar service that wraps pandas-market-calendars to provide
+    exchange-aware trading schedules, holidays, and session times.
+    
+    This class replaces the previous hardcoded holiday implementation with
+    a robust, maintained solution that supports 50+ global exchanges.
+    """
+    
+    def __init__(self, exchange_name: str = "NYSE"):
+        """
+        Initialize the MarketCalendar for a specific exchange.
+        
+        Args:
+            exchange_name: The name of the exchange calendar (e.g., 'CME', 'NYSE', 
+                          'CME_Energy', 'CME_Equity'). Defaults to 'NYSE'.
+                          
+        Raises:
+            ValueError: If exchange name is invalid or calendar not found
+            ImportError: If pandas-market-calendars is not installed
+        """
+        if not exchange_name:
+            raise ValueError("Exchange name cannot be empty.")
+        
+        self.exchange_name = exchange_name.upper()
+        
+        # For backward compatibility, check if pandas-market-calendars is available
+        if PANDAS_MARKET_CALENDARS_AVAILABLE:
+            self._calendar = get_calendar_instance(self.exchange_name)
+        else:
+            # Fallback to basic implementation
+            self._calendar = None
+            self.known_holidays = self._get_fallback_holidays()
+            
+    def _get_fallback_holidays(self) -> Set[date]:
+        """
+        Fallback holiday list when pandas-market-calendars is not available.
+        This maintains backward compatibility.
         
         Returns:
             Set of holiday dates
         """
-        # For demo purposes, include some common holidays
-        # In production, this would integrate with a proper market calendar service
         holidays = set()
-        
         current_year = datetime.now().year
+        
         for year in range(current_year - 1, current_year + 2):
             # New Year's Day
             holidays.add(date(year, 1, 1))
-            
             # Independence Day
             holidays.add(date(year, 7, 4))
-            
             # Christmas
             holidays.add(date(year, 12, 25))
-            
             # Thanksgiving (4th Thursday of November)
-            thanksgiving = self._get_nth_weekday(year, 11, 3, 4)  # 4th Thursday
+            thanksgiving = self._get_nth_weekday(year, 11, 3, 4)
             holidays.add(thanksgiving)
             
         return holidays
         
     def _get_nth_weekday(self, year: int, month: int, weekday: int, n: int) -> date:
-        """Get the nth occurrence of a weekday in a month.
+        """
+        Get the nth occurrence of a weekday in a month (fallback method).
         
         Args:
             year: Year
@@ -297,58 +358,117 @@ class MarketCalendar:
         """
         first_day = date(year, month, 1)
         first_weekday = first_day.weekday()
-        
-        # Calculate days to add to get to the first occurrence of the target weekday
         days_to_add = (weekday - first_weekday) % 7
         first_occurrence = first_day + timedelta(days=days_to_add)
-        
-        # Add weeks to get to the nth occurrence
         nth_occurrence = first_occurrence + timedelta(weeks=n-1)
-        
         return nth_occurrence
         
     def is_trading_day(self, check_date: date) -> bool:
-        """Check if a date is a trading day.
+        """
+        Check if a given date is a valid trading day for the exchange.
         
         Args:
-            check_date: Date to check
+            check_date: The date to check.
             
         Returns:
-            True if it's a trading day
+            True if the date is a trading day, False otherwise.
         """
-        # Weekend check
-        if check_date.weekday() >= 5:  # Saturday or Sunday
-            return False
+        if self._calendar:
+            # Use pandas-market-calendars
+            schedule = self._calendar.schedule(start_date=check_date, end_date=check_date)
+            return not schedule.empty
+        else:
+            # Fallback implementation
+            if check_date.weekday() >= 5:  # Weekend
+                return False
+            if check_date in self.known_holidays:
+                return False
+            return True
             
-        # Holiday check
-        if check_date in self.known_holidays:
-            return False
-            
-        return True
-        
     def get_trading_days(self, start_date: date, end_date: date, symbol: str = None) -> List[date]:
-        """Get all trading days in a date range.
+        """
+        Get a list of all valid trading days within a date range.
         
         Args:
-            start_date: Start date
-            end_date: End date  
-            symbol: Optional symbol for asset-specific calendars
+            start_date: The start of the date range.
+            end_date: The end of the date range.
+            symbol: Optional symbol for future asset-specific calendar support.
             
         Returns:
-            List of trading days
+            A list of trading days as date objects.
         """
-        trading_days = []
-        current_date = start_date
-        
-        while current_date <= end_date:
-            if self.is_trading_day(current_date):
-                trading_days.append(current_date)
-            current_date += timedelta(days=1)
+        if self._calendar:
+            # Use pandas-market-calendars
+            valid_days = self._calendar.valid_days(start_date=start_date, end_date=end_date)
+            # Convert pandas DatetimeIndex to list of date objects
+            return [pd_date.date() for pd_date in valid_days]
+        else:
+            # Fallback implementation
+            trading_days = []
+            current_date = start_date
+            while current_date <= end_date:
+                if self.is_trading_day(current_date):
+                    trading_days.append(current_date)
+                current_date += timedelta(days=1)
+            return trading_days
             
-        return trading_days
+    def get_schedule(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Get the detailed trading schedule for a date range.
         
+        Args:
+            start_date: The start of the date range.
+            end_date: The end of the date range.
+            
+        Returns:
+            A pandas DataFrame with 'market_open' and 'market_close' times,
+            or None if pandas-market-calendars is not available.
+        """
+        if self._calendar:
+            return self._calendar.schedule(start_date=start_date, end_date=end_date)
+        else:
+            # Return None if not available - caller should handle this case
+            return None
+            
+    def get_holidays(self, start_date: date, end_date: date) -> pd.DatetimeIndex:
+        """
+        Get a list of all holidays within a date range.
+        
+        Args:
+            start_date: The start of the date range.
+            end_date: The end of the date range.
+            
+        Returns:
+            A pandas DatetimeIndex of holiday dates, or a list of dates if
+            pandas-market-calendars is not available.
+        """
+        if self._calendar:
+            # Get holidays by finding non-trading days
+            # First get all dates in range
+            all_dates = pd.date_range(start=start_date, end=end_date, freq='D')
+            
+            # Get trading days
+            valid_days = self._calendar.valid_days(start_date=start_date, end_date=end_date)
+            
+            # Find holidays as dates that are weekdays but not trading days
+            holidays = []
+            for d in all_dates:
+                if d.weekday() < 5:  # Is a weekday
+                    if d not in valid_days:  # But not a trading day
+                        holidays.append(d)
+                        
+            return pd.DatetimeIndex(holidays)
+        else:
+            # Return filtered holidays from fallback set
+            holidays_in_range = [
+                h for h in self.known_holidays 
+                if start_date <= h <= end_date
+            ]
+            return pd.DatetimeIndex(holidays_in_range)
+            
     def get_next_trading_day(self, from_date: date) -> date:
-        """Get the next trading day after a given date.
+        """
+        Get the next trading day after a given date.
         
         Args:
             from_date: Starting date
@@ -356,13 +476,14 @@ class MarketCalendar:
         Returns:
             Next trading day
         """
-        next_date = from_date + timedelta(days=1)
-        while not self.is_trading_day(next_date):
-            next_date += timedelta(days=1)
-        return next_date
+        next_day = from_date + timedelta(days=1)
+        while not self.is_trading_day(next_day):
+            next_day += timedelta(days=1)
+        return next_day
         
     def get_previous_trading_day(self, from_date: date) -> date:
-        """Get the previous trading day before a given date.
+        """
+        Get the previous trading day before a given date.
         
         Args:
             from_date: Starting date
@@ -370,25 +491,209 @@ class MarketCalendar:
         Returns:
             Previous trading day
         """
-        prev_date = from_date - timedelta(days=1)
-        while not self.is_trading_day(prev_date):
-            prev_date -= timedelta(days=1)
-        return prev_date
+        prev_day = from_date - timedelta(days=1)
+        while not self.is_trading_day(prev_day):
+            prev_day -= timedelta(days=1)
+        return prev_day
+        
+    def get_early_closes(self, start_date: date, end_date: date) -> Dict[date, str]:
+        """
+        Get early close information for a date range.
+        
+        Detects trading days where the market closes earlier than the standard
+        trading schedule. Common on days before holidays, half-days, etc.
+        
+        Args:
+            start_date: The start of the date range.
+            end_date: The end of the date range.
+            
+        Returns:
+            Dictionary mapping dates to early close information as strings,
+            e.g., {date(2024,11,29): "13:00 (Thanksgiving)"}
+        """
+        early_closes = {}
+        
+        if not self._calendar:
+            # Fallback: Known US market early closes (hardcoded)
+            return self._get_fallback_early_closes(start_date, end_date)
+        
+        try:
+            schedule = self.get_schedule(start_date, end_date)
+            if schedule is None or schedule.empty:
+                return {}
+            
+            # Determine the normal close time by looking at a typical trading day
+            # We'll use the most common close time as the "normal" close time
+            close_times = []
+            for _, row in schedule.iterrows():
+                if hasattr(row, 'market_close') and pd.notna(row.market_close):
+                    close_time = row.market_close.time()
+                    close_times.append(close_time)
+            
+            if not close_times:
+                return {}
+            
+            # Find the most common close time (normal close)
+            from collections import Counter
+            time_counts = Counter(close_times)
+            normal_close_time = time_counts.most_common(1)[0][0]
+            
+            # Identify days with different (earlier) close times
+            for schedule_date, row in schedule.iterrows():
+                if hasattr(row, 'market_close') and pd.notna(row.market_close):
+                    close_time = row.market_close.time()
+                    
+                    # Check if this is significantly earlier than normal
+                    normal_minutes = normal_close_time.hour * 60 + normal_close_time.minute
+                    actual_minutes = close_time.hour * 60 + close_time.minute
+                    
+                    # Consider it early if it's more than 30 minutes earlier
+                    if normal_minutes - actual_minutes > 30:
+                        close_str = close_time.strftime("%H:%M")
+                        
+                        # Try to determine the reason based on date patterns
+                        trading_date = schedule_date.date()
+                        reason = self._determine_early_close_reason(trading_date)
+                        
+                        early_closes[trading_date] = f"{close_str} ({reason})"
+                        
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not detect early closes: {e}[/yellow]")
+            # Return fallback early closes for known dates
+            return self._get_fallback_early_closes(start_date, end_date)
+        
+        return early_closes
+
+    def _get_fallback_early_closes(self, start_date: date, end_date: date) -> Dict[date, str]:
+        """
+        Fallback early close detection using hardcoded rules for US markets.
+        
+        Returns known early close dates for major US market holidays when
+        pandas-market-calendars is not available or fails.
+        """
+        early_closes = {}
+        
+        # Iterate through years in the date range
+        start_year = start_date.year
+        end_year = end_date.year
+        
+        for year in range(start_year, end_year + 1):
+            # Known US market early closes (typically 13:00 ET)
+            known_early_closes = [
+                # Day after Thanksgiving (Friday)
+                self._get_day_after_thanksgiving(year),
+                # Christmas Eve (if it falls on a weekday)
+                date(year, 12, 24),
+                # Day before Independence Day (July 3rd if July 4th is weekend)
+                self._get_day_before_july_4th(year),
+                # Day before New Year's (Dec 31st if it falls on a weekday)
+                date(year, 12, 31),
+            ]
+            
+            for early_date in known_early_closes:
+                if early_date and start_date <= early_date <= end_date:
+                    # Check if it's a weekday (markets are typically closed on weekends)
+                    if early_date.weekday() < 5:  # 0-4 are Mon-Fri
+                        reason = self._determine_early_close_reason(early_date)
+                        early_closes[early_date] = f"13:00 ({reason})"
+        
+        return early_closes
+
+    def _get_day_after_thanksgiving(self, year: int) -> date:
+        """Get the day after Thanksgiving (Black Friday) for a given year."""
+        # Thanksgiving is the 4th Thursday of November
+        # Find the first Thursday of November
+        november_1st = date(year, 11, 1)
+        days_to_thursday = (3 - november_1st.weekday()) % 7
+        first_thursday = november_1st + timedelta(days=days_to_thursday)
+        
+        # Fourth Thursday is Thanksgiving
+        thanksgiving = first_thursday + timedelta(weeks=3)
+        
+        # Day after Thanksgiving (Black Friday)
+        return thanksgiving + timedelta(days=1)
+
+    def _get_day_before_july_4th(self, year: int) -> Optional[date]:
+        """Get July 3rd if July 4th falls on a weekend (making July 3rd a market early close)."""
+        july_4th = date(year, 7, 4)
+        
+        # If July 4th is Saturday or Sunday, markets often close early on Friday (July 3rd)
+        if july_4th.weekday() in [5, 6]:  # Saturday or Sunday
+            july_3rd = date(year, 7, 3)
+            if july_3rd.weekday() < 5:  # If July 3rd is a weekday
+                return july_3rd
+        
+        # If July 4th is Monday, sometimes markets close early on July 3rd (Friday)
+        elif july_4th.weekday() == 0:  # Monday
+            july_3rd = date(year, 7, 3)
+            if july_3rd.weekday() == 4:  # If July 3rd is Friday
+                return july_3rd
+        
+        return None
+
+    def _determine_early_close_reason(self, trading_date: date) -> str:
+        """Determine the likely reason for an early market close based on the date."""
+        month = trading_date.month
+        day = trading_date.day
+        
+        # Thanksgiving week
+        if month == 11:
+            thanksgiving = self._get_day_after_thanksgiving(trading_date.year) - timedelta(days=1)
+            if trading_date == thanksgiving + timedelta(days=1):
+                return "Black Friday"
+            elif abs((trading_date - thanksgiving).days) <= 1:
+                return "Thanksgiving week"
+        
+        # Christmas/New Year period
+        elif month == 12:
+            if day == 24:
+                return "Christmas Eve"
+            elif day == 31:
+                return "New Year's Eve"
+            elif 25 <= day <= 31:
+                return "Holiday week"
+        
+        # July 4th period
+        elif month == 7 and day in [3, 5]:
+            return "Independence Day"
+        
+        # Memorial Day, Labor Day area
+        elif month == 5 and trading_date.weekday() == 4:  # Friday in May
+            return "Memorial Day weekend"
+        elif month == 9 and trading_date.weekday() == 4:  # Friday in September
+            return "Labor Day weekend"
+        
+        # Default
+        return "Holiday"
+        
+    @property
+    def name(self) -> str:
+        """Get the name of the exchange for this calendar."""
+        return self.exchange_name
+        
+    def __repr__(self) -> str:
+        """String representation of the MarketCalendar."""
+        status = "pandas-market-calendars" if self._calendar else "fallback"
+        return f"MarketCalendar(exchange='{self.exchange_name}', mode='{status}')"
 
 
 class SmartValidator:
     """Intelligent input validation with suggestions and autocomplete."""
     
     def __init__(self, symbol_cache: Optional[SymbolCache] = None, 
-                 market_calendar: Optional[MarketCalendar] = None):
+                 market_calendar: Optional[MarketCalendar] = None,
+                 exchange_name: str = "NYSE"):
         """Initialize smart validator.
         
         Args:
             symbol_cache: Optional symbol cache instance
             market_calendar: Optional market calendar instance
+            exchange_name: Exchange name for calendar (e.g., 'CME', 'NYSE'). 
+                          Only used if market_calendar is not provided.
         """
         self.symbol_cache = symbol_cache or SymbolCache()
-        self.market_calendar = market_calendar or MarketCalendar()
+        self.market_calendar = market_calendar or MarketCalendar(exchange_name)
+        self.exchange_name = exchange_name
         
         # Common validation patterns
         self.date_patterns = [
@@ -594,6 +899,14 @@ class SmartValidator:
         total_days = (end_date - start_date).days + 1
         non_trading_days = total_days - len(trading_days)
         
+        # Get holidays in the range
+        holidays = self.market_calendar.get_holidays(start_date, end_date)
+        holiday_count = len(holidays)
+        
+        # Calculate weekend days (approximate)
+        weekend_days = sum(1 for d in range((end_date - start_date).days + 1) 
+                          if (start_date + timedelta(days=d)).weekday() >= 5)
+        
         # Build analysis
         analysis = {
             'start_date': start_date,
@@ -601,34 +914,63 @@ class SmartValidator:
             'total_days': total_days,
             'trading_days': len(trading_days),
             'non_trading_days': non_trading_days,
+            'weekend_days': weekend_days,
+            'holidays': holiday_count,
             'first_trading_day': trading_days[0] if trading_days else None,
             'last_trading_day': trading_days[-1] if trading_days else None,
-            'coverage_ratio': len(trading_days) / total_days if total_days > 0 else 0
+            'coverage_ratio': len(trading_days) / total_days if total_days > 0 else 0,
+            'exchange': self.market_calendar.name
         }
         
+        # Check for specific issues and provide targeted feedback
         if not trading_days:
-            return ValidationResult(
-                is_valid=False,
-                level=ValidationLevel.ERROR,
-                message="No trading days in selected range",
-                metadata=analysis,
-                suggestions=[
-                    f"Try extending range: start='{start_date - timedelta(days=7)}'"
-                ]
-            )
-            
-        # Success with analysis
-        message_parts = [
-            f"Valid date range: {len(trading_days)} trading days"
-        ]
+            # Check if start date is a holiday
+            if not self.market_calendar.is_trading_day(start_date):
+                next_trading = self.market_calendar.get_next_trading_day(start_date)
+                return ValidationResult(
+                    is_valid=False,
+                    level=ValidationLevel.ERROR,
+                    message=f"Start date {start_date} is not a trading day. Next trading day is {next_trading}.",
+                    metadata=analysis,
+                    suggestions=[
+                        f"Use next trading day: start='{next_trading}', end='{end_date}'",
+                        f"Or extend range: start='{start_date - timedelta(days=7)}', end='{end_date}'"
+                    ]
+                )
+            else:
+                return ValidationResult(
+                    is_valid=False,
+                    level=ValidationLevel.ERROR,
+                    message="No trading days in selected range",
+                    metadata=analysis,
+                    suggestions=[
+                        f"Try extending range: start='{start_date - timedelta(days=7)}'"
+                    ]
+                )
         
-        if non_trading_days > 0:
-            message_parts.append(f"({non_trading_days} non-trading days)")
+        # Determine the appropriate level based on trading day ratio
+        if analysis['coverage_ratio'] < 0.5:
+            level = ValidationLevel.WARNING
+            icon = "⚠️"
+        else:
+            level = ValidationLevel.SUCCESS
+            icon = "✅"
+            
+        # Build detailed message
+        message_parts = [f"{icon} Valid date range: {len(trading_days)} trading days"]
+        
+        if holiday_count > 0:
+            message_parts.append(f"(includes {holiday_count} market holiday{'s' if holiday_count > 1 else ''})")
+        
+        # Add warning for ranges with many non-trading days
+        if analysis['coverage_ratio'] < 0.7:
+            pct_non_trading = int((1 - analysis['coverage_ratio']) * 100)
+            message_parts.append(f"Note: {pct_non_trading}% of days are non-trading")
             
         return ValidationResult(
             is_valid=True,
-            level=ValidationLevel.SUCCESS,
-            message=", ".join(message_parts),
+            level=level,
+            message=". ".join(message_parts),
             metadata=analysis
         )
         
@@ -850,13 +1192,17 @@ class SmartValidator:
             return []
 
 
-def create_smart_validator() -> SmartValidator:
+def create_smart_validator(exchange_name: str = "NYSE") -> SmartValidator:
     """Create a SmartValidator instance with default configuration.
+    
+    Args:
+        exchange_name: Exchange name for market calendar (e.g., 'CME', 'NYSE').
+                      Defaults to 'NYSE'.
     
     Returns:
         Configured SmartValidator instance
     """
-    return SmartValidator()
+    return SmartValidator(exchange_name=exchange_name)
 
 
 def validate_cli_input(input_value: Any, input_type: str, **kwargs) -> ValidationResult:

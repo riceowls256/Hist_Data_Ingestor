@@ -6,6 +6,7 @@ rich
 pytest
 structlog
 pandas
+pandas-market-calendars>=5.0  # Market calendar support for exchange-aware date handling
 numpy<2.0  # Pin to 1.x for compatibility with compiled dependencies
 aiohttp
 psycopg2-binary

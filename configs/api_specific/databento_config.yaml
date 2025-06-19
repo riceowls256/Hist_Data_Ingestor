@@ -177,6 +177,29 @@ jobs:
     end_date: "2024-01-31"
     date_chunk_interval_days: 30
 
+  # Market Calendar Filtering Examples (Phase 2 Feature)
+  - name: "market_calendar_ohlcv"
+    dataset: "GLBX.MDP3"
+    schema: "ohlcv-1d"
+    symbols: ["ES.FUT", "CL.FUT"]
+    stype_in: "continuous"
+    start_date: "2024-01-01"
+    end_date: "2024-12-31"
+    date_chunk_interval_days: 7  # Weekly chunks
+    enable_market_calendar_filtering: true  # Skip non-trading day chunks
+    exchange_name: "CME_Equity"  # Use CME calendar for futures
+    
+  - name: "market_calendar_equity"
+    dataset: "XNAS.ITCH" 
+    schema: "ohlcv-1d"
+    symbols: ["SPY", "QQQ"]
+    stype_in: "native"
+    start_date: "2024-01-01"
+    end_date: "2024-12-31"
+    date_chunk_interval_days: 30  # Monthly chunks
+    enable_market_calendar_filtering: true  # Skip non-trading day chunks
+    exchange_name: "NYSE"  # Use NYSE calendar for equities
+
 # Retry Policy Configuration
 retry_policy:
   # Maximum number of retry attempts for failed API calls
