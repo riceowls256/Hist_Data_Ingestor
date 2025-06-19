@@ -19,9 +19,9 @@ Based on the comprehensive audit, we have identified a clear path to 100% struct
 ## Phase-by-Phase Implementation Plan
 
 ### Phase 1: CLI Command Modules (HIGH PRIORITY)
-**Target**: Convert print statements to structured logging in CLI commands
+**Target**: Add structured logging to CLI commands while preserving user output
 **Duration**: 4 hours
-**Risk**: MEDIUM (user-facing output)
+**Risk**: LOW (additive changes only)
 
 #### Files to Migrate (7 files):
 1. `src/cli/commands/system.py` - System status commands
@@ -34,30 +34,53 @@ Based on the comprehensive audit, we have identified a clear path to 100% struct
 
 #### Migration Pattern for CLI Commands:
 ```python
-# BEFORE (print statements):
-print(f"✅ Successfully processed {count} records")
-console.print(f"[red]Error: {error_message}[/red]")
-print(f"Status: {status}")
-
-# AFTER (structured logging):
+# DUAL APPROACH - Use BOTH logging AND user output:
 from src.utils.custom_logger import get_logger
+from rich.console import Console
+
 logger = get_logger(__name__)
+console = Console()
 
-# For user-facing output, use WARNING level (appears in console)
-logger.warning("records_processed", count=count, status="success")
-logger.error("operation_failed", error=error_message, operation="processing")
-logger.warning("status_update", status=status, component="system")
-
-# For debug/internal info, use appropriate levels
-logger.info("operation_started", operation="ingestion", symbol="ES.c.0")
-logger.debug("internal_state", cache_size=len(cache), memory_usage="45MB")
+def process_command(symbol: str):
+    # Structured logging for operations/debugging
+    logger.info("command_started", command="query", symbol=symbol, user="cli")
+    
+    try:
+        # Business logic
+        data = fetch_data(symbol)
+        
+        # KEEP: User-facing output (what users see)
+        console.print(f"✅ [green]Successfully processed {len(data)} records for {symbol}[/green]")
+        print(f"Retrieved {len(data)} records")  # Keep existing prints
+        
+        # ADD: Structured logging for operations
+        logger.info("command_completed", 
+            command="query",
+            symbol=symbol,
+            records_processed=len(data),
+            duration_seconds=timer.elapsed,
+            status="success"
+        )
+        
+    except Exception as e:
+        # KEEP: User error messages  
+        console.print(f"❌ [red]Error: {e}[/red]")
+        
+        # ADD: Structured logging for debugging
+        logger.error("command_failed",
+            command="query", 
+            symbol=symbol,
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        raise
 ```
 
-#### Special Considerations for CLI:
-- **Rich Console Output**: Maintain colored output for user experience
-- **Progress Bars**: Keep progress indicators functional
-- **Error Messages**: Ensure errors still show prominently
-- **Status Updates**: Use WARNING level for user-visible status
+#### CLI Migration Strategy:
+- **✅ KEEP**: All existing print statements and Rich console output
+- **✅ ADD**: Structured logging for operational events
+- **✅ PRESERVE**: User experience exactly as-is
+- **✅ ENHANCE**: Add debugging and monitoring capabilities
 
 ### Phase 2: CLI Utility Modules (MEDIUM PRIORITY)  
 **Target**: Add logging infrastructure to CLI support modules
@@ -169,9 +192,11 @@ class TimescaleTradesLoader:
    logger = get_logger(__name__)
    ```
 
-3. **Remove All Print Statements** in src/ directory
+3. **Keep Print Statements** in CLI modules (for user output)
 
-4. **Verify Configuration** - Ensure custom_logger.py is optimal
+4. **Remove Print Statements** only in non-CLI core modules (business logic)
+
+5. **Verify Configuration** - Ensure custom_logger.py is optimal
 
 ## Implementation Strategy
 
@@ -255,9 +280,9 @@ git checkout main -- src/cli/commands/[module].py
 
 ### Automated Verification:
 ```bash
-# 1. No print statements in src/
-find src/ -name "*.py" -exec grep -l "print(" {} \; | wc -l
-# Expected: 0
+# 1. No print statements in non-CLI core modules
+find src/core src/storage src/ingestion src/transformation src/querying src/utils -name "*.py" -exec grep -l "print(" {} \; | wc -l
+# Expected: 0 (print statements only allowed in CLI modules)
 
 # 2. All modules use get_logger
 grep -r "get_logger(__name__)" src/ | wc -l  
@@ -271,9 +296,9 @@ grep -r "import logging" src/ | grep -v custom_logger | wc -l
 ENVIRONMENT=production python main.py status 2>&1 | jq '.'
 # Expected: Valid JSON
 
-# 5. Console output works  
+# 5. Console output works (CLI prints preserved)
 ENVIRONMENT=development python main.py status
-# Expected: Colored, readable output
+# Expected: Colored, readable output with both logs and prints
 ```
 
 ### Manual Verification:
@@ -292,7 +317,8 @@ ENVIRONMENT=development python main.py status
 - [ ] **Phase 4**: 100% consistency, no fallbacks
 
 ### Final Success:
-- [ ] Zero print statements in `src/` directory
+- [ ] Zero print statements in non-CLI core modules (`src/core`, `src/storage`, etc.)
+- [ ] Print statements preserved in CLI modules for user output
 - [ ] 100% structlog usage with consistent patterns
 - [ ] JSON output in production, console in development
 - [ ] All tests passing
