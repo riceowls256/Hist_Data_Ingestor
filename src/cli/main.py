@@ -7,7 +7,7 @@ pipelines, querying stored data, and managing the system.
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import typer
 from rich.console import Console
@@ -70,6 +70,22 @@ try:
     success_count += 1
 except ImportError as e:
     console.print(f"⚠️  [yellow]Could not load help commands: {e}[/yellow]")
+total_modules += 1
+
+# Ingestion commands
+try:
+    from cli.commands.ingestion import app as ingestion_app
+    success_count += 1
+except ImportError as e:
+    console.print(f"⚠️  [yellow]Could not load ingestion commands: {e}[/yellow]")
+total_modules += 1
+
+# Querying commands
+try:
+    from cli.commands.querying import app as querying_app
+    success_count += 1
+except ImportError as e:
+    console.print(f"⚠️  [yellow]Could not load querying commands: {e}[/yellow]")
 total_modules += 1
 
 # Add system commands directly to main app for now
@@ -229,6 +245,101 @@ if 'system_app' in locals():
             from cli.commands.help import cheatsheet as help_cheatsheet
             return help_cheatsheet()
 
+    # Add ingestion commands to main app if available
+    if 'ingestion_app' in locals():
+        @app.command()
+        def ingest(
+            api: str = typer.Option(..., help="API provider. Currently supports: databento"),
+            job: Optional[str] = typer.Option(None, help="Predefined job name from config file. Use 'list-jobs' to see available jobs."),
+            dataset: Optional[str] = typer.Option(None, help="Dataset identifier (e.g., GLBX.MDP3 for CME Globex)"),
+            schema: Optional[str] = typer.Option(None, help="Data schema: ohlcv-1d (daily), ohlcv-1h (hourly), ohlcv-1m (minute), ohlcv-1s (second), trades, tbbo (quotes), statistics, definitions"),
+            symbols: Optional[str] = typer.Option(None, help="Comma-separated symbols (e.g., ES.FUT,CL.FUT). See 'examples ingest' for formats."),
+            start_date: Optional[str] = typer.Option(None, help="Start date in YYYY-MM-DD format"),
+            end_date: Optional[str] = typer.Option(None, help="End date in YYYY-MM-DD format (inclusive)"),
+            stype_in: Optional[str] = typer.Option(None, help="Symbol type: continuous (c.0), native, parent (.FUT)"),
+            force: bool = typer.Option(False, "--force", help="Skip confirmation prompt"),
+            dry_run: bool = typer.Option(False, "--dry-run", help="Preview ingestion without execution"),
+            guided: bool = typer.Option(False, "--guided", help="Use interactive guided mode to select parameters"),
+        ):
+            """Execute data ingestion pipeline to fetch and store financial market data."""
+            from cli.commands.ingestion import ingest as ingestion_ingest
+            return ingestion_ingest(api, job, dataset, schema, symbols, start_date, end_date, stype_in, force, dry_run, guided)
+        
+        @app.command()
+        def backfill(
+            symbol_group: str = typer.Argument(..., help="Symbol group: SP500_SAMPLE, ENERGY_FUTURES, INDEX_FUTURES, or custom symbols"),
+            lookback: str = typer.Option("1y", help="Lookback period: 1d, 1w, 1m, 3m, 6m, 1y, 3y, 5y, 10y"),
+            schemas: List[str] = typer.Option(["ohlcv-1d"], help="Data schemas to backfill"),
+            api: str = typer.Option("databento", help="API provider"),
+            dataset: str = typer.Option("GLBX.MDP3", help="Dataset to use"),
+            batch_size: int = typer.Option(5, help="Number of symbols to process in parallel"),
+            retry_failed: bool = typer.Option(True, help="Automatically retry failed symbols"),
+            dry_run: bool = typer.Option(False, help="Preview operation without execution"),
+            force: bool = typer.Option(False, help="Skip confirmation prompts")
+        ):
+            """High-level backfill command for common use cases."""
+            from cli.commands.ingestion import backfill as ingestion_backfill
+            return ingestion_backfill(symbol_group, lookback, schemas, api, dataset, batch_size, retry_failed, dry_run, force)
+
+    # Add querying commands to main app if available
+    if 'querying_app' in locals():
+        @app.command()
+        def query(
+            symbols: List[str] = typer.Option(
+                ...,
+                "--symbols", "-s",
+                help="Security symbols (e.g., ES.c.0, NQ.c.0). Can be comma-separated or multiple -s flags"
+            ),
+            start_date: str = typer.Option(
+                ...,
+                "--start-date", "-sd",
+                help="Start date (YYYY-MM-DD)"
+            ),
+            end_date: str = typer.Option(
+                ...,
+                "--end-date", "-ed",
+                help="End date (YYYY-MM-DD)"
+            ),
+            schema: str = typer.Option(
+                "ohlcv-1d",
+                "--schema",
+                help="Schema type: ohlcv-1d (daily), ohlcv-1h (hourly), ohlcv-1m (minute), ohlcv-1s (second), trades, tbbo (quotes), statistics, definitions"
+            ),
+            output_format: str = typer.Option(
+                "table",
+                "--output-format", "-f",
+                help="Output format (table, csv, json)"
+            ),
+            output_file: Optional[str] = typer.Option(
+                None,
+                "--output-file", "-o",
+                help="Output file path"
+            ),
+            limit: Optional[int] = typer.Option(
+                None,
+                "--limit",
+                help="Limit number of results. Useful for large datasets like trades/tbbo."
+            ),
+            dry_run: bool = typer.Option(
+                False,
+                "--dry-run",
+                help="Preview query without execution. Shows what would be queried."
+            ),
+            validate_only: bool = typer.Option(
+                False,
+                "--validate-only",
+                help="Validate parameters without executing query. Useful for testing."
+            ),
+            guided: bool = typer.Option(
+                False,
+                "--guided",
+                help="Use interactive guided mode to select parameters"
+            ),
+        ):
+            """Query historical financial data from TimescaleDB with intelligent symbol resolution."""
+            from cli.commands.querying import query as querying_query
+            return querying_query(symbols, start_date, end_date, schema, output_format, output_file, limit, dry_run, validate_only, guided)
+
 # Report loading status
 if success_count == total_modules:
     console.print(f"✅ [green]All {success_count}/{total_modules} command modules loaded successfully[/green]")
@@ -254,6 +365,8 @@ def info():
     console.print("✅ [green]Completed:[/green]")
     console.print("  • System commands (status, version, config, monitor, list-jobs)")
     console.print("  • Help commands (examples, troubleshoot, tips, schemas, quickstart, help-menu, cheatsheet)")
+    console.print("  • Ingestion commands (ingest, backfill)")
+    console.print("  • Query commands (query)")
     console.print("  • CLI infrastructure and base classes")
     console.print("  • Shared utilities and constants")
     console.print("  • Comprehensive testing framework")
@@ -263,8 +376,6 @@ def info():
     console.print("  • Performance optimization")
     
     console.print("\n⏳ [blue]Pending:[/blue]")
-    console.print("  • Ingestion commands (ingest, backfill)")
-    console.print("  • Query commands (query)")
     console.print("  • Workflow commands (quickstart, workflows)")
     console.print("  • Validation commands (validate, market-calendar)")
     console.print("  • Symbol commands (groups, symbols, symbol-lookup)")

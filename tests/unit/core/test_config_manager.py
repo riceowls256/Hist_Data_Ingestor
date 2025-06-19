@@ -1,6 +1,6 @@
 import pytest
 import os
-from hist_data_ingestor.src.core.config_manager import ConfigManager
+from src.core.config_manager import ConfigManager
 
 
 def test_config_loads_from_yaml_only(tmp_path, monkeypatch):

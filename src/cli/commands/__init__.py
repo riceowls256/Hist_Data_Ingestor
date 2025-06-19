@@ -15,7 +15,19 @@ try:
 except ImportError:
     help_app = None
 
+try:
+    from .ingestion import app as ingestion_app
+except ImportError:
+    ingestion_app = None
+
+try:
+    from .querying import app as querying_app
+except ImportError:
+    querying_app = None
+
 __all__ = [
     "system_app",
-    "help_app"
+    "help_app",
+    "ingestion_app",
+    "querying_app"
 ]

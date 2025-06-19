@@ -42,6 +42,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from dotenv import load_dotenv
 
+try:
+    import pandas_market_calendars as pmc  # type: ignore
+    PANDAS_MARKET_CALENDARS_AVAILABLE = True
+except ImportError:
+    pmc = None
+    PANDAS_MARKET_CALENDARS_AVAILABLE = False
+
 # Load environment variables from .env file (override existing env vars)
 load_dotenv(override=True)
 
@@ -1440,8 +1447,7 @@ def market_calendar(
             console.print("\n📅 [bold cyan]Available Market Calendars:[/bold cyan]\n")
             if PANDAS_MARKET_CALENDARS_AVAILABLE:
                 try:
-                    import pandas_market_calendars as mcal
-                    available = mcal.get_calendar_names()
+                    available = pmc.get_calendar_names()
                     console.print("Exchange calendars available through pandas-market-calendars:")
                     for exchange_name in sorted(available):
                         console.print(f"  • {exchange_name}")
@@ -1552,8 +1558,8 @@ def market_calendar(
                     # Show first 10 days to avoid overwhelming output
                     for idx, (date, row) in enumerate(schedule_df.head(10).iterrows()):
                         if hasattr(row, 'market_open') and hasattr(row, 'market_close'):
-                            open_time = row.market_open.strftime("%H:%M") if pd.notna(row.market_open) else "N/A"
-                            close_time = row.market_close.strftime("%H:%M") if pd.notna(row.market_close) else "N/A" 
+                            open_time = row.market_open.strftime("%H:%M") if row.market_open is not None else "N/A"
+                            close_time = row.market_close.strftime("%H:%M") if row.market_close is not None else "N/A" 
                         else:
                             open_time = "N/A"
                             close_time = "N/A"
