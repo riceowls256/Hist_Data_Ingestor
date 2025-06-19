@@ -593,3 +593,60 @@ def config(
         console.print(f"❌ [red]Configuration error: {e}[/red]")
         logger.error(f"Configuration error: {e}")
         raise typer.Exit(1)
+
+
+@app.command("status-dashboard")
+def status_dashboard(
+    refresh_rate: float = typer.Option(
+        2.0,
+        "--refresh-rate", "-r",
+        help="Dashboard refresh rate in Hz (default: 2.0)"
+    ),
+    show_system: bool = typer.Option(
+        True,
+        "--system/--no-system",
+        help="Show system metrics panel"
+    ),
+    show_queue: bool = typer.Option(
+        True,
+        "--queue/--no-queue", 
+        help="Show operation queue panel"
+    )
+):
+    """
+    🖥️  Launch live status dashboard with real-time monitoring.
+    
+    Displays a continuous real-time dashboard with system metrics,
+    active operations, and operation queue status.
+    
+    Examples:
+        python main.py status-dashboard                    # Standard dashboard
+        python main.py status-dashboard --refresh-rate 5.0 # Slower refresh
+        python main.py status-dashboard --no-system        # Hide system metrics
+        python main.py status-dashboard --no-queue         # Hide queue panel
+    """
+    log_user_message(f"Starting status dashboard: refresh_rate={refresh_rate}Hz, system={show_system}, queue={show_queue}")
+    console.print("🖥️  [bold cyan]Starting Live Status Dashboard[/bold cyan]")
+    console.print(f"📊 Refresh Rate: {refresh_rate} Hz")
+    console.print("⏹️  Press Ctrl+C to exit\n")
+    
+    try:
+        # Import the LiveStatusDashboard class
+        dashboard = LiveStatusDashboard(
+            refresh_rate=refresh_rate,
+            show_system_metrics=show_system,
+            show_operation_queue=show_queue
+        )
+        
+        # Start the dashboard (this will run until Ctrl+C)
+        dashboard.start()
+        
+    except KeyboardInterrupt:
+        console.print("\n👋 [green]Dashboard stopped by user[/green]")
+        log_status("Status dashboard stopped by user")
+        
+    except Exception as e:
+        console.print(f"\n❌ [red]Dashboard error: {e}[/red]")
+        console.print("💡 [blue]Use 'python main.py troubleshoot status-dashboard' for help[/blue]")
+        logger.exception("Status dashboard failed")
+        raise typer.Exit(1)

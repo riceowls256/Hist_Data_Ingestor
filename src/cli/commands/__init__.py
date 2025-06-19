@@ -35,11 +35,17 @@ try:
 except ImportError:
     validation_app = None
 
+try:
+    from .symbols import app as symbols_app
+except ImportError:
+    symbols_app = None
+
 __all__ = [
     "system_app",
     "help_app",
     "ingestion_app",
     "querying_app",
     "workflow_app",
-    "validation_app"
+    "validation_app",
+    "symbols_app"
 ]
