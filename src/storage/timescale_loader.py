@@ -14,7 +14,7 @@ from psycopg2.extras import RealDictCursor
 from psycopg2 import sql
 import os
 
-from storage.models import DatabentoDefinitionRecord
+from src.storage.models import DatabentoDefinitionRecord
 
 logger = structlog.get_logger(__name__)
 

@@ -203,7 +203,7 @@ schema_mappings:
   # Definition Schema Data Mapping
   definition:
     source_model: "DatabentoDefinitionRecord"
-    target_schema: "instrument_definitions"
+    target_schema: "definitions_data"
     description: "Maps instrument definition records to standardized instrument metadata format"
     
     field_mappings:
@@ -215,17 +215,17 @@ schema_mappings:
       instrument_id: "instrument_id"
       
       # Core definition fields
-      raw_symbol: "symbol"
+      raw_symbol: "raw_symbol"
       security_update_action: "update_action"
       instrument_class: "instrument_class"
-      min_price_increment: "tick_size"
+      min_price_increment: "min_price_increment"
       display_factor: "display_factor"
-      expiration: "expiration_date"
-      activation: "activation_date"
+      expiration: "expiration"
+      activation: "activation"
       high_limit_price: "high_limit_price"
       low_limit_price: "low_limit_price"
       max_price_variation: "max_price_variation"
-      unit_of_measure_qty: "contract_size"
+      unit_of_measure_qty: "unit_of_measure_qty"
       min_price_increment_amount: "min_price_increment_amount"
       price_ratio: "price_ratio"
       inst_attrib_value: "instrument_attributes"

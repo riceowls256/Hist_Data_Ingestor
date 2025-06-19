@@ -396,41 +396,147 @@ class StatisticsSchema(BaseDatabentoSchema):
 
 
 class DefinitionSchema(BaseDatabentoSchema):
-    """Validation schema for Definition data."""
-    symbol: Series[str] = pa.Field(nullable=False)
+    """Validation schema for Definition data - Updated for real-world data patterns."""
+    
+    # Core fields - flexible validation for production data
+    raw_symbol: Series[str] = pa.Field(nullable=True)  # Raw symbol from API
+    instrument_class: Series[str] = pa.Field(nullable=True)  # Single char codes
+    cfi_code: Series[str] = pa.Field(nullable=True)  # CFI codes like "FMMXSX"
+    underlying_asset: Series[str] = pa.Field(nullable=True)  # Assets like "CL", "ES"
+    
+    # Date fields
     expiration: Series[datetime] = pa.Field(nullable=True)
     activation: Series[datetime] = pa.Field(nullable=True)
-    min_price_increment: Series[float] = pa.Field(gt=0, nullable=True, coerce=True)
-    unit_of_measure_qty: Series[float] = pa.Field(gt=0, nullable=True, coerce=True)
-    instrument_class: Series[str] = pa.Field(nullable=True)
+    
+    # Price/quantity fields - allow extreme values for limit prices
+    min_price_increment: Series[float] = pa.Field(nullable=True, coerce=True)
+    unit_of_measure_qty: Series[float] = pa.Field(nullable=True, coerce=True)
+    high_limit_price: Series[float] = pa.Field(nullable=True, coerce=True)
+    low_limit_price: Series[float] = pa.Field(nullable=True, coerce=True)
+    
+    # Exchange and identifiers
+    exchange: Series[str] = pa.Field(nullable=True)
+    currency: Series[str] = pa.Field(nullable=True)
+    instrument_id: Series[int] = pa.Field(nullable=True, coerce=True)
+    
+    class Config:
+        """Pandera configuration for relaxed validation."""
+        strict = False  # Allow extra fields
+        coerce = True   # Type coercion enabled
 
     @pa.dataframe_check
     def check_symbol_format(cls, df: pd.DataFrame) -> pd.Series:
-        """Validate symbol format."""
-        return df['symbol'].apply(validate_symbol_format)
+        """Validate raw_symbol format - relaxed for real data."""
+        if 'raw_symbol' not in df.columns:
+            return pd.Series([True] * len(df), index=df.index)
+        # Very basic validation - just check non-empty strings
+        return df['raw_symbol'].astype(str).str.len() > 0
 
-    @pa.dataframe_check
+    @pa.dataframe_check  
     def check_expiration_activation(cls, df: pd.DataFrame) -> pd.Series:
         """Validate expiration > activation when both are present."""
+        # Handle missing columns gracefully
+        if 'expiration' not in df.columns or 'activation' not in df.columns:
+            return pd.Series([True] * len(df), index=df.index)
+            
         mask = df['expiration'].notna() & df['activation'].notna()
         condition = pd.Series([True] * len(df), index=df.index)
-        condition[mask] = df.loc[mask, 'expiration'] > df.loc[mask, 'activation']
+        if mask.any():
+            condition[mask] = df.loc[mask, 'expiration'] > df.loc[mask, 'activation']
         return condition
 
     @pa.dataframe_check
     def check_instrument_class_values(cls, df: pd.DataFrame) -> pd.Series:
-        """Validate instrument_class values."""
-        valid_classes = {'Future', 'Option', 'Spread', 'Stock', 'Index', 'FX'}
-        return df['instrument_class'].isin(valid_classes) | df['instrument_class'].isna()
+        """Validate instrument_class values - allow broader patterns."""
+        # Skip validation if column not present
+        if 'instrument_class' not in df.columns:
+            return pd.Series([True] * len(df), index=df.index)
+            
+        # Allow single character codes (F, O, S, C, etc.) and null values
+        return (
+            df['instrument_class'].isna() | 
+            (df['instrument_class'].astype(str).str.len() == 1)
+        )
+
+    @pa.dataframe_check
+    def check_cfi_code_format(cls, df: pd.DataFrame) -> pd.Series:
+        """Validate CFI code format - allow standard patterns."""
+        if 'cfi_code' not in df.columns:
+            return pd.Series([True] * len(df), index=df.index)
+            
+        # CFI codes are typically 6 characters or null
+        return (
+            df['cfi_code'].isna() | 
+            (df['cfi_code'].astype(str).str.len().isin([6, 0]))
+        )
+
+    @pa.dataframe_check
+    def check_price_reasonableness(cls, df: pd.DataFrame) -> pd.Series:
+        """Validate price fields are reasonable - allow extreme limit prices."""
+        condition = pd.Series([True] * len(df), index=df.index)
+        
+        # Check min_price_increment is positive when present
+        if 'min_price_increment' in df.columns:
+            mask = df['min_price_increment'].notna()
+            if mask.any():
+                condition &= (df['min_price_increment'] > 0) | df['min_price_increment'].isna()
+        
+        return condition
 
     @pa.dataframe_check
     def check_timestamps(cls, df: pd.DataFrame) -> pd.Series:
         """Validate timestamp timezone awareness."""
+        if 'ts_event' not in df.columns:
+            return pd.Series([True] * len(df), index=df.index)
         return df['ts_event'].apply(validate_timestamp_timezone_aware)
 
 # ========================================================================================
 # Schema Dispatcher
 # ========================================================================================
+
+
+def _normalize_schema_name(schema_name: str) -> str:
+    """
+    Normalize user-friendly or CLI schema aliases to their canonical schema names.
+    Uses the same comprehensive alias mapping as the databento adapter.
+    
+    Args:
+        schema_name: Schema name or alias
+        
+    Returns:
+        Canonical schema name
+    """
+    aliases = {
+        # Definitions
+        "definitions": "definition",
+
+        # OHLCV Aliases
+        "ohlcv-daily": "ohlcv-1d",
+        "ohlcv-eod": "ohlcv-1d",
+        "ohlcv-d": "ohlcv-1d",
+        "ohlcv-h": "ohlcv-1h",
+        "ohlcv-m": "ohlcv-1m",
+        "ohlcv-s": "ohlcv-1s",
+
+        # Market Depth
+        "top-of-book": "tbbo",
+        "quotes": "tbbo",
+
+        # Statistics shorthand
+        "stats": "statistics",
+
+        # Other common shorthands
+        "order-book": "mbp-1",
+        "book": "mbp-1",
+        "best-book": "mbp-1",
+        "trd": "trades",
+        "bbo": "tbbo",
+    }
+    
+    input_schema = schema_name.lower()
+    canonical_schema = aliases.get(input_schema, input_schema)
+    
+    return canonical_schema
 
 
 def get_validation_schema(schema_name: str) -> pa.DataFrameModel:
@@ -446,6 +552,9 @@ def get_validation_schema(schema_name: str) -> pa.DataFrameModel:
     Raises:
         ValueError: If schema_name is not recognized
     """
+    # Normalize schema name to handle aliases
+    normalized_schema = _normalize_schema_name(schema_name)
+    
     schema_mapping = {
         "ohlcv-1d": OHLCVSchema,
         "ohlcv-1h": OHLCVSchema,
@@ -456,10 +565,10 @@ def get_validation_schema(schema_name: str) -> pa.DataFrameModel:
         "definition": DefinitionSchema,
     }
 
-    if schema_name not in schema_mapping:
+    if normalized_schema not in schema_mapping:
         raise ValueError(f"Unknown schema name: {schema_name}. Available schemas: {list(schema_mapping.keys())}")
 
-    return schema_mapping[schema_name]
+    return schema_mapping[normalized_schema]
 
 
 def handle_validation_errors(

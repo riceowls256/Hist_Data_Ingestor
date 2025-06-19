@@ -16,13 +16,13 @@ import structlog
 from pydantic import BaseModel, ValidationError
 from tenacity import RetryError
 
-from core.config_manager import ConfigManager
-from ingestion.api_adapters.base_adapter import BaseAdapter
-from ingestion.api_adapters.databento_adapter import DatabentoAdapter
-from transformation.rule_engine import RuleEngine, TransformationError
-from storage.timescale_loader import TimescaleDefinitionLoader
-from storage.timescale_ohlcv_loader import TimescaleOHLCVLoader
-from utils.custom_logger import get_logger
+from src.core.config_manager import ConfigManager
+from src.ingestion.api_adapters.base_adapter import BaseAdapter
+from src.ingestion.api_adapters.databento_adapter import DatabentoAdapter
+from src.transformation.rule_engine import RuleEngine, TransformationError
+from src.storage.timescale_loader import TimescaleDefinitionLoader
+from src.storage.timescale_ohlcv_loader import TimescaleOHLCVLoader
+from src.utils.custom_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -329,9 +329,9 @@ class PipelineOrchestrator:
             self.ohlcv_loader = TimescaleOHLCVLoader(connection_params)
             
             # Import and initialize new loaders
-            from storage.timescale_trades_loader import TimescaleTradesLoader
-            from storage.timescale_tbbo_loader import TimescaleTBBOLoader
-            from storage.timescale_statistics_loader import TimescaleStatisticsLoader
+            from src.storage.timescale_trades_loader import TimescaleTradesLoader
+            from src.storage.timescale_tbbo_loader import TimescaleTBBOLoader
+            from src.storage.timescale_statistics_loader import TimescaleStatisticsLoader
             
             self.trades_loader = TimescaleTradesLoader(connection_params)
             self.tbbo_loader = TimescaleTBBOLoader(connection_params)
@@ -342,6 +342,7 @@ class PipelineOrchestrator:
             self.trades_loader.create_schema_if_not_exists()
             self.tbbo_loader.create_schema_if_not_exists()
             self.statistics_loader.create_schema_if_not_exists()
+            self.storage_loader.create_schema_if_not_exists()  # Create definitions table
 
             logger.info("All pipeline components initialized successfully", api_type=api_type)
 
@@ -709,42 +710,101 @@ class PipelineOrchestrator:
     def _validate_and_repair_record_dict(self, record_dict: Dict[str, Any], schema: str, job_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Validate and attempt to repair record dictionary before Pydantic model creation."""
         
+        # Make a copy to avoid modifying the original
+        repaired_dict = record_dict.copy()
+        
+        # Apply field name mapping for definition records
+        if schema == 'definition':
+            repaired_dict = self._apply_definition_field_mapping(repaired_dict)
+        
         # Check for required symbol field
-        if 'symbol' not in record_dict or not record_dict['symbol']:
+        if 'symbol' not in repaired_dict or not repaired_dict['symbol']:
             # Attempt to repair symbol field
             symbols = job_config.get('symbols')
             if symbols:
                 if isinstance(symbols, list) and len(symbols) == 1:
-                    record_dict['symbol'] = symbols[0]
+                    repaired_dict['symbol'] = symbols[0]
                 elif isinstance(symbols, str):
-                    record_dict['symbol'] = symbols
+                    repaired_dict['symbol'] = symbols
                 else:
                     # Multi-symbol case - use instrument_id or fallback
-                    if 'instrument_id' in record_dict:
-                        record_dict['symbol'] = f"INSTRUMENT_{record_dict['instrument_id']}"
+                    if 'instrument_id' in repaired_dict:
+                        repaired_dict['symbol'] = f"INSTRUMENT_{repaired_dict['instrument_id']}"
                     else:
-                        record_dict['symbol'] = "UNKNOWN_SYMBOL"
+                        repaired_dict['symbol'] = "UNKNOWN_SYMBOL"
                 
                 logger.info("Repaired missing symbol field", 
-                           symbol=record_dict['symbol'], 
+                           symbol=repaired_dict['symbol'], 
                            original_symbols=symbols)
             else:
                 logger.error("Cannot repair missing symbol field - no symbols in job config", 
-                            record_dict=record_dict)
+                            record_dict=repaired_dict)
                 return None
         
         # Validate other required fields based on schema
         required_fields = self._get_required_fields_for_schema(schema)
-        missing_fields = [field for field in required_fields if field not in record_dict]
+        missing_fields = [field for field in required_fields if field not in repaired_dict]
         
         if missing_fields:
             logger.error("Cannot repair missing required fields", 
                         missing_fields=missing_fields, 
                         schema=schema,
-                        record_dict=record_dict)
+                        record_dict=repaired_dict)
             return None
         
-        return record_dict
+        return repaired_dict
+    
+    def _apply_definition_field_mapping(self, record_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply field name mapping for definition records to match Pydantic model field names."""
+        
+        # Field mappings from transformed dict field names to Pydantic model field names
+        field_mappings = {
+            'record_type': 'rtype',
+            'update_action': 'security_update_action', 
+            'instrument_attributes': 'inst_attrib_value',
+            'max_trade_volume': 'max_trade_vol',
+            'min_block_size': 'min_lot_size_block',
+            'min_round_lot_size': 'min_lot_size_round_lot',
+            'min_trade_volume': 'min_trade_vol',
+            'security_group': 'group',
+            'underlying_asset': 'asset',
+            'underlying_instrument_id': 'underlying_id',
+            'settlement_currency': 'settl_currency',
+            'security_subtype': 'secsubtype',
+            'cfi_code': 'cfi',
+            'underlying_symbol': 'underlying',
+            'strike_currency': 'strike_price_currency',
+            'matching_algorithm': 'match_algorithm',
+            'underlying_product_code': 'underlying_product',
+            'is_user_defined': 'user_defined_instrument',
+            'application_id': 'appl_id'
+        }
+        
+        mapped_dict = {}
+        
+        # Copy all fields, applying mappings where needed
+        for key, value in record_dict.items():
+            mapped_key = field_mappings.get(key, key)
+            mapped_dict[mapped_key] = value
+        
+        # Ensure required fields have default values if missing
+        required_defaults = {
+            'rtype': 19,
+            'security_update_action': 'A',
+            'inst_attrib_value': 0,
+            'max_trade_vol': 0,
+            'min_lot_size_block': 0,
+            'min_lot_size_round_lot': 0,
+            'min_trade_vol': 0,
+            'group': '',
+            'asset': ''
+        }
+        
+        for field, default_value in required_defaults.items():
+            if field not in mapped_dict:
+                mapped_dict[field] = default_value
+        
+        return mapped_dict
 
     def _get_required_fields_for_schema(self, schema: str) -> List[str]:
         """Get list of required fields for each schema type."""
@@ -757,6 +817,18 @@ class PipelineOrchestrator:
         
         schema_base = schema.split('-')[0] if '-' in schema else schema
         return required_fields.get(schema_base, ['ts_event', 'symbol'])
+
+    def _normalize_schema_name_for_storage(self, schema_name: str) -> str:
+        """
+        Normalize schema names for consistent storage routing.
+        Uses the same mapping as the databento adapter.
+        """
+        schema_aliases = {
+            "definitions": "definition",
+            "stats": "statistics", 
+            "ohlcv": "ohlcv-1d",
+        }
+        return schema_aliases.get(schema_name, schema_name)
 
     def _stage_data_storage(self, data: Any, job_name: str, chunk_idx: int, job_config: Dict[str, Any]) -> bool:
         """
@@ -792,7 +864,7 @@ class PipelineOrchestrator:
             # Check the type of the first record to determine storage strategy
             first_record = records_list[0]
 
-            from storage.models import (
+            from src.storage.models import (
                 DatabentoOHLCVRecord, 
                 DatabentoDefinitionRecord, 
                 DatabentoStatisticsRecord,
@@ -861,10 +933,26 @@ class PipelineOrchestrator:
                 # Use Definition loader for Definition records
                 storage_logger = storage_logger.bind(storage_type="definition", table="definitions")
                 storage_logger.debug("Storing Definition records")
-                self.storage_loader.insert_definition_records(records_list)
+                stats = self.storage_loader.insert_definition_records(records_list)
+                if isinstance(stats, dict):
+                    self.stats.records_stored += stats.get('inserted', 0)
+                    if stats.get('errors', 0) > 0:
+                        storage_logger.warning(f"Failed to store {stats['errors']} definition records")
+                else:
+                    # Fallback for loaders that don't return stats dict
+                    self.stats.records_stored += len(records_list)
+                
+                storage_logger.debug(
+                    "Data storage completed",
+                    records_stored=len(records_list),
+                    record_type=type(first_record).__name__
+                )
+                return True
             elif isinstance(first_record, dict):
                 # Records have been transformed to dictionaries - use schema from job config
-                schema = job_config.get('schema', '').lower()
+                raw_schema = job_config.get('schema', '').lower()
+                # Normalize schema name for consistent storage routing
+                schema = self._normalize_schema_name_for_storage(raw_schema)
                 data_source = job_config.get('api', 'databento')
                 
                 if 'ohlcv' in schema:
@@ -1051,22 +1139,49 @@ class PipelineOrchestrator:
                             storage_logger.warning(f"Failed to store {stats['errors']} statistics records")
                 elif schema == 'definition':
                     # Use Definition loader for transformed definition records
-                    storage_logger = storage_logger.bind(storage_type="definition", table="definitions")
+                    storage_logger = storage_logger.bind(storage_type="definition", table="definitions_data")
                     storage_logger.debug("Storing transformed Definition records")
                     
-                    # Convert dicts back to Pydantic models for the loader
+                    # Convert dicts back to Pydantic models for the loader with validation and repair
                     pydantic_records = []
+                    repair_stats = {'repaired': 0, 'failed_repair': 0, 'conversion_errors': 0}
+                    
                     for record_dict in records_list:
+                        # Pre-validate and repair if needed
+                        validated_dict = self._validate_and_repair_record_dict(record_dict, schema, job_config)
+                        
+                        if validated_dict is None:
+                            repair_stats['failed_repair'] += 1
+                            self.stats.errors_encountered += 1
+                            continue
+                        
+                        if validated_dict != record_dict:
+                            repair_stats['repaired'] += 1
+                        
                         try:
-                            pydantic_record = DatabentoDefinitionRecord(**record_dict)
+                            pydantic_record = DatabentoDefinitionRecord(**validated_dict)
                             pydantic_records.append(pydantic_record)
                         except ValidationError as e:
-                            storage_logger.error(f"Failed to convert dict to Definition model: {e}")
+                            repair_stats['conversion_errors'] += 1
+                            storage_logger.error("Failed to convert validated dict to Definition model", 
+                                               error=str(e),
+                                               validated_dict=validated_dict,
+                                               original_dict=record_dict)
                             self.stats.errors_encountered += 1
                     
+                    # Log repair statistics
+                    if any(repair_stats.values()):
+                        storage_logger.info("Record repair statistics", **repair_stats)
+                    
                     if pydantic_records:
-                        self.storage_loader.insert_definition_records(pydantic_records)
-                        self.stats.records_stored += len(pydantic_records)
+                        stats = self.storage_loader.insert_definition_records(pydantic_records)
+                        if isinstance(stats, dict):
+                            self.stats.records_stored += stats.get('inserted', 0)
+                            if stats.get('errors', 0) > 0:
+                                storage_logger.warning(f"Failed to store {stats['errors']} definition records")
+                        else:
+                            # Fallback for loaders that don't return stats dict
+                            self.stats.records_stored += len(pydantic_records)
                 else:
                     # Unknown schema type
                     storage_logger.error(

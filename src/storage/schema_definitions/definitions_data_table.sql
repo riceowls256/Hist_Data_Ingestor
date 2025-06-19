@@ -165,8 +165,9 @@ CREATE INDEX idx_definitions_group_asset ON definitions_data (group_code, asset)
 -- Expiration and maturity indexes for futures analysis
 CREATE INDEX idx_definitions_expiration ON definitions_data (expiration);
 CREATE INDEX idx_definitions_maturity ON definitions_data (maturity_year, maturity_month);
-CREATE INDEX idx_definitions_active_contracts ON definitions_data (asset, expiration) 
-    WHERE expiration > NOW();
+-- Note: Partial indexes with NOW() cannot be created as NOW() is not IMMUTABLE
+-- Use a concrete date or create the index without the WHERE clause
+CREATE INDEX idx_definitions_active_contracts ON definitions_data (asset, expiration);
 
 -- Spread and leg analysis indexes
 CREATE INDEX idx_definitions_spreads ON definitions_data (asset, leg_count) 
@@ -215,12 +216,14 @@ COMMENT ON COLUMN definitions_data.asset IS 'Underlying asset/product code (e.g.
 -- ================================================================================================
 -- VERIFICATION QUERIES
 -- ================================================================================================
+-- Note: These queries are for manual verification only. 
+-- Do not execute them through the Python psycopg2 connection.
 
--- Verify table structure
-\d definitions_data
+-- Verify table structure (run in psql)
+-- \d definitions_data
 
 -- Verify hypertable creation
-SELECT * FROM timescaledb_information.hypertables WHERE hypertable_name = 'definitions_data';
+-- SELECT * FROM timescaledb_information.hypertables WHERE hypertable_name = 'definitions_data';
 
 -- Verify indexes
-SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'definitions_data' ORDER BY indexname; 
+-- SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'definitions_data' ORDER BY indexname; 

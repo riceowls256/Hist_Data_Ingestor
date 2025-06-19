@@ -19,12 +19,12 @@ from tenacity import (
     retry_if_exception_type,
     RetryError,
 )
-from utils.custom_logger import get_logger
+from src.utils.custom_logger import get_logger
 
-from ingestion.api_adapters.base_adapter import BaseAdapter
-from storage.models import DATABENTO_SCHEMA_MODEL_MAPPING
-from transformation.validators.databento_validators import validate_dataframe
-from utils.file_io import QuarantineManager
+from src.ingestion.api_adapters.base_adapter import BaseAdapter
+from src.storage.models import DATABENTO_SCHEMA_MODEL_MAPPING
+from src.transformation.validators.databento_validators import validate_dataframe
+from src.utils.file_io import QuarantineManager
 
 logger = get_logger(__name__)
 
@@ -124,6 +124,70 @@ class DatabentoAdapter(BaseAdapter):
             reraise=True
         )
 
+    def _normalize_schema(self, schema: str) -> str:
+        """
+        Normalize user-friendly or CLI schema aliases to their canonical Databento API schema names.
+        Raises an error if the schema is not recognized.
+
+        Args:
+            schema (str): User-provided or config-provided schema name.
+
+        Returns:
+            str: Canonical Databento API schema name.
+
+        Raises:
+            ValueError: If the schema is not recognized
+        """
+        aliases = {
+            # Definitions
+            "definitions": "definition",
+
+            # OHLCV Aliases
+            "ohlcv-daily": "ohlcv-1d",
+            "ohlcv-eod": "ohlcv-1d",
+            "ohlcv-d": "ohlcv-1d",
+            "ohlcv-h": "ohlcv-1h",
+            "ohlcv-m": "ohlcv-1m",
+            "ohlcv-s": "ohlcv-1s",
+
+            # Market Depth
+            "top-of-book": "tbbo",
+            "quotes": "tbbo",
+
+            # Statistics shorthand
+            "stats": "statistics",
+
+            # Other common shorthands
+            "order-book": "mbp-1",
+            "book": "mbp-1",
+            "best-book": "mbp-1",
+            "trd": "trades",
+            "bbo": "tbbo",
+        }
+
+        valid_schemas = {
+            "mbo", "mbp-1", "mbp-10", "tbbo", "trades",
+            "ohlcv-1s", "ohlcv-1m", "ohlcv-1h", "ohlcv-1d",
+            "definition", "statistics", "status", "imbalance",
+            "ohlcv-eod", "cmbp-1", "cbbo-1s", "cbbo-1m", "tcbbo",
+            "bbo-1s", "bbo-1m"
+        }
+
+        input_schema = schema.lower()
+        canonical_schema = aliases.get(input_schema, input_schema)
+
+        if canonical_schema not in valid_schemas:
+            logger.error("Unrecognized schema passed to normalize", input=input_schema)
+            raise ValueError(
+                f"Schema '{schema}' is not recognized. "
+                f"Use one of: {sorted(valid_schemas)} or valid alias."
+            )
+
+        if input_schema != canonical_schema:
+            logger.debug("Normalized schema alias", input_schema=schema, normalized_schema=canonical_schema)
+
+        return canonical_schema
+
     def _fetch_data_chunk(
         self,
         dataset: str,
@@ -150,9 +214,13 @@ class DatabentoAdapter(BaseAdapter):
         Raises:
             RuntimeError: If API call fails after all retries
         """
+        # Normalize the schema to canonical name
+        normalized_schema = self._normalize_schema(schema)
+        
         # Bind context for this specific API call
         api_logger = logger.bind(
-            schema_name=schema,
+            schema_name=normalized_schema,
+            original_schema=schema if schema != normalized_schema else None,
             dataset=dataset,
             symbols=symbols,
             start_date=start_date,
@@ -168,7 +236,7 @@ class DatabentoAdapter(BaseAdapter):
             return self.client.timeseries.get_range(
                 dataset=dataset,
                 symbols=symbols,
-                schema=schema,
+                schema=normalized_schema,
                 start=start_date,
                 end=end_date,
                 stype_in=stype_in
@@ -281,6 +349,36 @@ class DatabentoAdapter(BaseAdapter):
         return True
 
 
+    def _clean_string_field(self, value: Any) -> str:
+        """
+        Clean string fields by removing NUL characters and handling encoding.
+        
+        Args:
+            value: The raw value from the API
+            
+        Returns:
+            Cleaned string value safe for PostgreSQL
+        """
+        if value is None:
+            return ''
+        
+        # Handle bytes
+        if isinstance(value, bytes):
+            try:
+                # Decode and remove NUL terminators
+                cleaned = value.decode('utf-8').rstrip('\x00')
+            except UnicodeDecodeError:
+                # Fallback to latin-1 if utf-8 fails
+                cleaned = value.decode('latin-1').rstrip('\x00')
+        else:
+            # Convert to string and remove NUL characters
+            cleaned = str(value).rstrip('\x00')
+        
+        # Remove any embedded NUL characters that might cause PostgreSQL issues
+        cleaned = cleaned.replace('\x00', '')
+        
+        return cleaned
+
     def _record_to_dict(self, record, symbols=None) -> Dict[str, Any]:
         """
         Convert a Databento record to dictionary using direct attribute access.
@@ -323,6 +421,81 @@ class DatabentoAdapter(BaseAdapter):
             'stat_value': lambda x: Decimal(str(x / 1_000_000_000)) if x is not None else None
         }
 
+        # Check if this is a definition record (rtype = 19)
+        if hasattr(record, 'rtype') and record.rtype == 19:
+            # Add comprehensive field mappings for definition records
+            field_mappings.update({
+                # Core definition fields - handle char types - API field name to mapping
+                'raw_symbol': lambda x: self._clean_string_field(x),
+                'update_action': lambda x: chr(x) if isinstance(x, int) else str(x),  # API field name
+                'instrument_class': lambda x: chr(x) if isinstance(x, int) else str(x),
+                'min_price_increment': lambda x: Decimal(str(x / 1_000_000_000)),
+                'display_factor': lambda x: Decimal(str(x / 1_000_000_000)),
+                'expiration': lambda x: datetime.fromtimestamp(x / 1_000_000_000, tz=UTC),
+                'activation': lambda x: datetime.fromtimestamp(x / 1_000_000_000, tz=UTC),
+                'high_limit_price': lambda x: Decimal(str(x / 1_000_000_000)),
+                'low_limit_price': lambda x: Decimal(str(x / 1_000_000_000)),
+                'max_price_variation': lambda x: Decimal(str(x / 1_000_000_000)),
+                'unit_of_measure_qty': lambda x: Decimal(str(x / 1_000_000_000)),
+                'min_price_increment_amount': lambda x: Decimal(str(x / 1_000_000_000)),
+                'price_ratio': lambda x: Decimal(str(x / 1_000_000_000)),
+                'inst_attrib_value': lambda x: x,  # API field name
+                'underlying_instrument_id': lambda x: x if x != 0 else None,  # API field name  
+                'raw_instrument_id': lambda x: x if x != 0 else None,
+                'market_depth_implied': lambda x: x,
+                'market_depth': lambda x: x,
+                'market_segment_id': lambda x: x,
+                'max_trade_volume': lambda x: x,  # API field name
+                'min_lot_size': lambda x: x,
+                'min_block_size': lambda x: x,  # API field name
+                'min_round_lot_size': lambda x: x,  # API field name  
+                'min_trade_volume': lambda x: x,  # API field name
+                'contract_multiplier': lambda x: x if x != 0 else None,
+                'decay_quantity': lambda x: x if x != 0 else None,
+                'original_contract_size': lambda x: x if x != 0 else None,
+                'application_id': lambda x: x if x != 0 else None,  # API field name
+                'maturity_year': lambda x: x if x != 0 else None,
+                'decay_start_date': lambda x: datetime.fromtimestamp((x - 719163) * 86400, tz=UTC).date() if x != 0 else None,  # Excel date to Python date
+                'channel_id': lambda x: x,
+                'currency': lambda x: self._clean_string_field(x),
+                'settlement_currency': lambda x: self._clean_string_field(x) if x else None,  # API field name
+                'security_subtype': lambda x: self._clean_string_field(x) if x else None,  # API field name
+                'security_group': lambda x: self._clean_string_field(x),  # API field name
+                'exchange': lambda x: self._clean_string_field(x),
+                'underlying_asset': lambda x: self._clean_string_field(x),  # API field name
+                'cfi_code': lambda x: self._clean_string_field(x) if x else None,  # API field name
+                'security_type': lambda x: self._clean_string_field(x) if x else None,
+                'unit_of_measure': lambda x: self._clean_string_field(x) if x else None,
+                'underlying_symbol': lambda x: self._clean_string_field(x) if x else None,  # API field name
+                'strike_currency': lambda x: self._clean_string_field(x) if x else None,  # API field name
+                'strike_price': lambda x: Decimal(str(x / 1_000_000_000)) if x != 0 else None,
+                'matching_algorithm': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,  # API field name
+                'main_fraction': lambda x: x if x != 0 else None,
+                'price_display_format': lambda x: x if x != 0 else None,
+                'sub_fraction': lambda x: x if x != 0 else None,
+                'underlying_product_code': lambda x: x if x != 0 else None,  # API field name
+                'maturity_month': lambda x: x if x != 0 else None,
+                'maturity_day': lambda x: x if x != 0 else None,
+                'maturity_week': lambda x: x if x != 0 else None,
+                'is_user_defined': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,  # API field name
+                'contract_multiplier_unit': lambda x: x if x != 0 else None,
+                'flow_schedule_type': lambda x: x if x != 0 else None,
+                'tick_rule': lambda x: x if x != 0 else None,
+                'leg_count': lambda x: x,
+                'leg_index': lambda x: x if x != 65535 else None,  # 65535 is null value
+                'leg_instrument_id': lambda x: x if x != 0 else None,
+                'leg_raw_symbol': lambda x: x.decode('utf-8') if isinstance(x, bytes) else str(x).rstrip('\x00') if x else None,
+                'leg_instrument_class': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,
+                'leg_side': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,
+                'leg_price': lambda x: Decimal(str(x / 1_000_000_000)) if x != 0 else None,
+                'leg_delta': lambda x: Decimal(str(x / 1_000_000_000)) if x != 0 else None,
+                'leg_ratio_price_numerator': lambda x: x if x != 0 else None,
+                'leg_ratio_price_denominator': lambda x: x if x != 0 else None,
+                'leg_ratio_qty_numerator': lambda x: x if x != 0 else None,
+                'leg_ratio_qty_denominator': lambda x: x if x != 0 else None,
+                'leg_underlying_id': lambda x: x if x != 0 else None,
+            })
+
         # Special handling for TBBO records (MBP1Msg format)
         # Extract bid/ask data from levels[0] if available
         if hasattr(record, 'levels') and record.levels:
@@ -361,6 +534,45 @@ class DatabentoAdapter(BaseAdapter):
                         elif field == 'price' and hasattr(record, 'stat_type'):
                             # For statistics records, map 'price' field to 'stat_value'
                             record_dict['stat_value'] = converter(value)
+                        # Definition record field name mappings - API field names to Pydantic model field names
+                        elif field == 'rtype':
+                            record_dict['rtype'] = converter(value)
+                        elif field == 'update_action' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['security_update_action'] = converter(value)
+                        elif field == 'inst_attrib_value' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['inst_attrib_value'] = converter(value)
+                        elif field == 'max_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['max_trade_vol'] = converter(value)
+                        elif field == 'min_block_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_lot_size_block'] = converter(value)
+                        elif field == 'min_round_lot_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_lot_size_round_lot'] = converter(value)
+                        elif field == 'min_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_trade_vol'] = converter(value)
+                        elif field == 'security_group' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['group'] = converter(value)
+                        elif field == 'underlying_asset' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['asset'] = converter(value)
+                        elif field == 'underlying_instrument_id' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['underlying_id'] = converter(value)
+                        elif field == 'settlement_currency' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['settl_currency'] = converter(value)
+                        elif field == 'security_subtype' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['secsubtype'] = converter(value)
+                        elif field == 'cfi_code' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['cfi'] = converter(value)
+                        elif field == 'underlying_symbol' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['underlying'] = converter(value)
+                        elif field == 'strike_currency' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['strike_price_currency'] = converter(value)
+                        elif field == 'matching_algorithm' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['match_algorithm'] = converter(value)
+                        elif field == 'underlying_product_code' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['underlying_product'] = converter(value)
+                        elif field == 'is_user_defined' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['user_defined_instrument'] = converter(value)
+                        elif field == 'application_id' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['appl_id'] = converter(value)
                         else:
                             record_dict[field] = converter(value)
                     else:
@@ -378,6 +590,23 @@ class DatabentoAdapter(BaseAdapter):
                         elif field == 'price' and hasattr(record, 'stat_type'):
                             # For statistics records, map 'price' field to 'stat_value'
                             record_dict['stat_value'] = None
+                        # Definition record field name mappings for None values
+                        elif field == 'update_action' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['security_update_action'] = None
+                        elif field == 'inst_attrib_value' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['inst_attrib_value'] = None
+                        elif field == 'max_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['max_trade_vol'] = None
+                        elif field == 'min_block_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_lot_size_block'] = None
+                        elif field == 'min_round_lot_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_lot_size_round_lot'] = None
+                        elif field == 'min_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['min_trade_vol'] = None
+                        elif field == 'security_group' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['group'] = None
+                        elif field == 'underlying_asset' and hasattr(record, 'rtype') and record.rtype == 19:
+                            record_dict['asset'] = None
                         else:
                             record_dict[field] = None
                 except (ValueError, TypeError, AttributeError) as e:
@@ -396,6 +625,23 @@ class DatabentoAdapter(BaseAdapter):
                     elif field == 'price' and hasattr(record, 'stat_type'):
                         # For statistics records, map 'price' field to 'stat_value'
                         record_dict['stat_value'] = None
+                    # Definition record field name mappings for error cases
+                    elif field == 'update_action' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['security_update_action'] = None
+                    elif field == 'inst_attrib_value' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['inst_attrib_value'] = None
+                    elif field == 'max_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['max_trade_vol'] = None
+                    elif field == 'min_block_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['min_lot_size_block'] = None
+                    elif field == 'min_round_lot_size' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['min_lot_size_round_lot'] = None
+                    elif field == 'min_trade_volume' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['min_trade_vol'] = None
+                    elif field == 'security_group' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['group'] = None
+                    elif field == 'underlying_asset' and hasattr(record, 'rtype') and record.rtype == 19:
+                        record_dict['asset'] = None
                     else:
                         record_dict[field] = None
 
@@ -405,6 +651,24 @@ class DatabentoAdapter(BaseAdapter):
         # For OHLCV records that don't have ts_recv, use ts_event as fallback
         if 'ts_event' in record_dict and 'ts_recv' not in record_dict:
             record_dict['ts_recv'] = record_dict['ts_event']
+
+        # For definition records, ensure required fields have default values if missing from API
+        if hasattr(record, 'rtype') and record.rtype == 19:
+            # Provide default values for required fields that might be missing from API
+            if 'security_update_action' not in record_dict:
+                record_dict['security_update_action'] = 'A'  # Default to Add
+            if 'max_trade_vol' not in record_dict:
+                record_dict['max_trade_vol'] = 0  # Default value
+            if 'min_lot_size_block' not in record_dict:
+                record_dict['min_lot_size_block'] = 0  # Default value
+            if 'min_lot_size_round_lot' not in record_dict:
+                record_dict['min_lot_size_round_lot'] = 0  # Default value
+            if 'min_trade_vol' not in record_dict:
+                record_dict['min_trade_vol'] = 0  # Default value
+            if 'group' not in record_dict:
+                record_dict['group'] = ''  # Default to empty string
+            if 'asset' not in record_dict:
+                record_dict['asset'] = ''  # Default to empty string
 
         return record_dict
 
@@ -463,17 +727,22 @@ class DatabentoAdapter(BaseAdapter):
             operation="fetch_historical_data"
         )
 
+        # Normalize schema first to handle aliases
+        normalized_schema = self._normalize_schema(schema)
+        
         date_chunks = self._generate_date_chunks(start_date, end_date, chunk_interval_days)
 
-        model_cls = DATABENTO_SCHEMA_MODEL_MAPPING.get(schema)
+        model_cls = DATABENTO_SCHEMA_MODEL_MAPPING.get(normalized_schema)
         if not model_cls:
-            fetch_logger.error("No Pydantic model found for schema")
+            fetch_logger.error("No Pydantic model found for schema", 
+                              original_schema=schema, 
+                              normalized_schema=normalized_schema)
             return
 
         validation_stats = {"total_records": 0, "failed_validation": 0}
 
         for start, end in date_chunks:
-            data_chunk = self._fetch_data_chunk(dataset, schema, symbols, stype_in, start, end)
+            data_chunk = self._fetch_data_chunk(dataset, normalized_schema, symbols, stype_in, start, end)
 
             for record in data_chunk:
                 validation_stats["total_records"] += 1

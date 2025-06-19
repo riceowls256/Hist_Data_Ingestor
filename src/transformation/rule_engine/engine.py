@@ -84,6 +84,49 @@ class RuleEngine:
             logger.error(f"Error parsing YAML configuration: {e}")
             raise
 
+    def _normalize_schema_name(self, schema_name: str) -> str:
+        """
+        Normalize user-friendly or CLI schema aliases to their canonical schema names.
+        Uses the same comprehensive alias mapping as the databento adapter.
+        
+        Args:
+            schema_name: Schema name or alias
+            
+        Returns:
+            Canonical schema name
+        """
+        aliases = {
+            # Definitions
+            "definitions": "definition",
+
+            # OHLCV Aliases
+            "ohlcv-daily": "ohlcv-1d",
+            "ohlcv-eod": "ohlcv-1d",
+            "ohlcv-d": "ohlcv-1d",
+            "ohlcv-h": "ohlcv-1h",
+            "ohlcv-m": "ohlcv-1m",
+            "ohlcv-s": "ohlcv-1s",
+
+            # Market Depth
+            "top-of-book": "tbbo",
+            "quotes": "tbbo",
+
+            # Statistics shorthand
+            "stats": "statistics",
+
+            # Other common shorthands
+            "order-book": "mbp-1",
+            "book": "mbp-1",
+            "best-book": "mbp-1",
+            "trd": "trades",
+            "bbo": "tbbo",
+        }
+        
+        input_schema = schema_name.lower()
+        canonical_schema = aliases.get(input_schema, input_schema)
+        
+        return canonical_schema
+
     def get_schema_mapping(self, schema_name: str) -> Dict[str, Any]:
         """
         Get the mapping configuration for a specific schema.
@@ -97,11 +140,15 @@ class RuleEngine:
         Raises:
             KeyError: If the schema is not found in the configuration
         """
-        if schema_name not in self.schema_mappings:
+        # Normalize schema name to handle aliases
+        normalized_schema = self._normalize_schema_name(schema_name)
+        
+        if normalized_schema not in self.schema_mappings:
             available_schemas = list(self.schema_mappings.keys())
-            raise KeyError(f"Schema '{schema_name}' not found. Available schemas: {available_schemas}")
+            available_aliases = list({"definitions": "definition", "stats": "statistics", "ohlcv": "ohlcv-1d"}.keys())
+            raise KeyError(f"Schema '{schema_name}' not found. Available schemas: {available_schemas}. Available aliases: {available_aliases}")
 
-        return self.schema_mappings[schema_name]
+        return self.schema_mappings[normalized_schema]
 
     def transform_record(self,
                          record: BaseModel,
