@@ -319,7 +319,7 @@ ENVIRONMENT=development python main.py status
   - [x] `src/cli/commands/validation.py` - Validation commands ✅
   - [x] `src/cli/commands/workflow.py` - Workflow commands ✅
   - [x] `src/cli/commands/symbols.py` - Symbol management commands ✅
-- [ ] **Phase 2**: All CLI utilities have logging infrastructure  
+- [x] **Phase 2**: All CLI utilities have logging infrastructure (3/15 completed - 20% done) 🔄  
 - [ ] **Phase 3**: All storage modules log operations
 - [ ] **Phase 4**: 100% consistency, no fallbacks
 
@@ -337,7 +337,7 @@ ENVIRONMENT=development python main.py status
 | Phase | Duration | Start | Completion | Status |
 |-------|----------|-------|------------|--------|
 | Phase 1: CLI Commands | 4 hours | 2025-06-19 | 2025-06-19 | ✅ **COMPLETED** (100% complete) |
-| Phase 2: CLI Utilities | 3 hours | 2025-06-19 | 2025-06-20 | 🔄 **READY TO START** |
+| Phase 2: CLI Utilities | 3 hours | 2025-06-19 | 2025-06-20 | 🔄 **IN PROGRESS** (20% complete) |
 | Phase 3: Storage/Core | 2 hours | 2025-06-20 | 2025-06-20 | ⏳ Pending |
 | Phase 4: Cleanup | 1 hour | 2025-06-20 | 2025-06-20 | ⏳ Pending |
 | **TOTAL** | **10 hours** | **2025-06-19** | **2025-06-20** | 🔄 **IN PROGRESS** |
@@ -346,7 +346,9 @@ ENVIRONMENT=development python main.py status
 
 ## 📊 **Current Progress Update (2025-06-19)**
 
-### ✅ **Phase 1 Progress: CLI Commands Migration (6/7 completed - 86%)**
+### ✅ **Phase 1 Complete: CLI Commands Migration (7/7 completed - 100%)**
+
+### 🔄 **Phase 2 In Progress: CLI Utilities Migration (3/15 completed - 20%)**
 
 **Completed Files:**
 1. **`src/cli/commands/system.py`** ✅
