@@ -173,6 +173,9 @@ def validate_symbol_stype_combination(symbols: List[str], stype_in: str) -> List
     
     invalid_symbols = []
     for symbol in symbols:
+        # Special case: ALL_SYMBOLS is allowed with any stype_in
+        if symbol == "ALL_SYMBOLS":
+            continue
         if not pattern.match(symbol):
             invalid_symbols.append(symbol)
             

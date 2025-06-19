@@ -201,17 +201,77 @@ class TimescaleDefinitionLoader:
                 low_limit_price = EXCLUDED.low_limit_price
         """
 
+    def _sanitize_for_postgres(self, value: Any) -> Any:
+        """
+        Sanitize values for PostgreSQL insertion by removing NUL characters.
+        
+        Args:
+            value: The value to sanitize
+            
+        Returns:
+            Sanitized value safe for PostgreSQL insertion
+        """
+        if value is None:
+            return None
+        
+        if isinstance(value, str):
+            # Remove NUL characters that PostgreSQL cannot handle
+            return value.replace('\x00', '')
+        
+        return value
+
+    def _fix_constraints(self, record: DatabentoDefinitionRecord) -> DatabentoDefinitionRecord:
+        """
+        Fix field constraints to satisfy database constraints:
+        - Convert sentinel values (255, 65535, 127, etc.) to None
+        - Apply leg field constraint logic
+        - Apply maturity field constraints
+        """
+        # Fix leg_index constraint
+        leg_index = record.leg_index
+        if leg_index in (255, 65535):
+            leg_index = None
+            
+        # Apply leg constraint logic
+        if record.leg_count == 0 and leg_index is not None:
+            record.leg_index = None
+        elif record.leg_count > 0 and leg_index is None:
+            record.leg_index = 0
+        else:
+            record.leg_index = leg_index
+        
+        # Fix maturity field constraints (255 is sentinel value)
+        if record.maturity_month is not None and record.maturity_month in (255, 0):
+            record.maturity_month = None
+        if record.maturity_day is not None and record.maturity_day in (255, 0):
+            record.maturity_day = None
+        if record.maturity_week is not None and record.maturity_week in (255, 0):
+            record.maturity_week = None
+            
+        # Fix other integer sentinel values
+        if record.main_fraction is not None and record.main_fraction in (255, 65535):
+            record.main_fraction = None
+        if record.price_display_format is not None and record.price_display_format in (255, 65535):
+            record.price_display_format = None
+        if record.sub_fraction is not None and record.sub_fraction in (255, 65535):
+            record.sub_fraction = None
+            
+        return record
+
     def _record_to_tuple(self, record: DatabentoDefinitionRecord) -> tuple:
-        """Convert a DatabentoDefinitionRecord to tuple for database insertion."""
+        """Convert a DatabentoDefinitionRecord to tuple for database insertion with NUL character cleaning."""
+        # Fix all field constraints before conversion
+        record = self._fix_constraints(record)
+        
         return (
             record.ts_event,
             record.ts_recv,
             record.rtype,
             record.publisher_id,
             record.instrument_id,
-            record.raw_symbol,
-            record.security_update_action,
-            record.instrument_class,
+            self._sanitize_for_postgres(record.raw_symbol),
+            self._sanitize_for_postgres(record.security_update_action),
+            self._sanitize_for_postgres(record.instrument_class),
             record.min_price_increment,
             record.display_factor,
             record.expiration,
@@ -240,19 +300,19 @@ class TimescaleDefinitionLoader:
             record.maturity_year,
             record.decay_start_date,
             record.channel_id,
-            record.currency,
-            record.settl_currency,
-            record.secsubtype,
-            record.group,
-            record.exchange,
-            record.asset,
-            record.cfi,
-            record.security_type,
-            record.unit_of_measure,
-            record.underlying,
-            record.strike_price_currency,
+            self._sanitize_for_postgres(record.currency),
+            self._sanitize_for_postgres(record.settl_currency),
+            self._sanitize_for_postgres(record.secsubtype),
+            self._sanitize_for_postgres(record.group),
+            self._sanitize_for_postgres(record.exchange),
+            self._sanitize_for_postgres(record.asset),
+            self._sanitize_for_postgres(record.cfi),
+            self._sanitize_for_postgres(record.security_type),
+            self._sanitize_for_postgres(record.unit_of_measure),
+            self._sanitize_for_postgres(record.underlying),
+            self._sanitize_for_postgres(record.strike_price_currency),
             record.strike_price,
-            record.match_algorithm,
+            self._sanitize_for_postgres(record.match_algorithm),
             record.main_fraction,
             record.price_display_format,
             record.sub_fraction,
@@ -260,16 +320,16 @@ class TimescaleDefinitionLoader:
             record.maturity_month,
             record.maturity_day,
             record.maturity_week,
-            record.user_defined_instrument,
+            self._sanitize_for_postgres(record.user_defined_instrument),
             record.contract_multiplier_unit,
             record.flow_schedule_type,
             record.tick_rule,
             record.leg_count,
             record.leg_index,
             record.leg_instrument_id,
-            record.leg_raw_symbol,
-            record.leg_instrument_class,
-            record.leg_side,
+            self._sanitize_for_postgres(record.leg_raw_symbol),
+            self._sanitize_for_postgres(record.leg_instrument_class),
+            self._sanitize_for_postgres(record.leg_side),
             record.leg_price,
             record.leg_delta,
             record.leg_ratio_price_numerator,

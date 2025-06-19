@@ -482,11 +482,11 @@ class DatabentoAdapter(BaseAdapter):
                 'flow_schedule_type': lambda x: x if x != 0 else None,
                 'tick_rule': lambda x: x if x != 0 else None,
                 'leg_count': lambda x: x,
-                'leg_index': lambda x: x if x != 65535 else None,  # 65535 is null value
+                'leg_index': lambda x: x if x not in (255, 65535) else None,  # 255 and 65535 are null values
                 'leg_instrument_id': lambda x: x if x != 0 else None,
                 'leg_raw_symbol': lambda x: x.decode('utf-8') if isinstance(x, bytes) else str(x).rstrip('\x00') if x else None,
-                'leg_instrument_class': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,
-                'leg_side': lambda x: chr(x) if isinstance(x, int) else str(x) if x else None,
+                'leg_instrument_class': lambda x: chr(x) if isinstance(x, int) and x not in (255, 127) else str(x) if x and x not in (255, 127) else None,
+                'leg_side': lambda x: chr(x) if isinstance(x, int) and x not in (255, 127) else str(x) if x and x not in (255, 127) else None,
                 'leg_price': lambda x: Decimal(str(x / 1_000_000_000)) if x != 0 else None,
                 'leg_delta': lambda x: Decimal(str(x / 1_000_000_000)) if x != 0 else None,
                 'leg_ratio_price_numerator': lambda x: x if x != 0 else None,

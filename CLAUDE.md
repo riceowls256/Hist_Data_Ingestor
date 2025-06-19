@@ -11,6 +11,32 @@ The Historical Data Ingestor is a production-ready Python system for ingesting, 
 ### Important Note on Date Ranges
 When using the `ingest` command, the start date and end date **MUST** be different. The Databento API returns an error if start_date equals end_date. Always use at least a 1-day range (e.g., 2024-01-01 to 2024-01-02).
 
+#### Recommended Date Range Guidelines
+For reliable data retrieval and optimal performance:
+
+**✅ Recommended Ranges:**
+- **Definitions Schema**: 2-3 weeks for comprehensive instrument coverage
+- **OHLCV Data**: 1 week to 1 month for analysis
+- **Trades/TBBO**: 1-3 days maximum (high-volume data)
+- **Statistics**: 1-2 weeks for pattern analysis
+
+**⚠️ Performance Considerations:**
+- Narrow ranges (1-2 days) may return sparse data for definitions
+- Very wide ranges (>1 month) may cause timeouts for high-frequency data
+- ALL_SYMBOLS queries require wider date ranges for meaningful results
+
+**💡 Production Examples:**
+```bash
+# Optimal definitions ingestion (2-3 weeks)
+python main.py ingest --api databento --dataset GLBX.MDP3 --schema definitions --symbols ES.FUT,CL.FUT --stype-in parent --start-date 2024-04-15 --end-date 2024-05-05
+
+# OHLCV analysis (1 week)
+python main.py ingest --api databento --dataset GLBX.MDP3 --schema ohlcv-1d --symbols ES.c.0,CL.c.0 --start-date 2024-04-15 --end-date 2024-04-22
+
+# High-frequency data (short range)
+python main.py ingest --api databento --dataset GLBX.MDP3 --schema trades --symbols ES.c.0 --start-date 2024-04-15 --end-date 2024-04-16
+```
+
 ### Running the Application
 
 ```bash
@@ -132,6 +158,72 @@ CLI → PipelineOrchestrator → APIAdapter → RuleEngine → Validator → Sto
 - Environment variables manage sensitive configuration (API keys, passwords)
 - BMad Method orchestrator configuration available for AI-assisted development
 
+## Troubleshooting Guide
+
+### Common Issues and Solutions
+
+#### 🔧 Definitions Schema Issues
+
+**Problem**: "Invalid symbols for stype_in='native': ALL_SYMBOLS"  
+**Solution**: This has been fixed. ALL_SYMBOLS now works with any stype_in parameter.
+
+**Problem**: Date range returns no data  
+**Solution**: Use wider date ranges (2-3 weeks) for definitions. Narrow ranges often have sparse coverage.
+
+**Problem**: Database constraint violations  
+**Solution**: These have been resolved. The pipeline now handles all database constraints automatically.
+
+#### 🔧 General Ingestion Issues
+
+**Problem**: API timeout errors  
+**Solution**: 
+- Reduce date range size
+- Use fewer symbols per request
+- Check network connectivity
+
+**Problem**: "Start date must be different from end date"  
+**Solution**: Always use at least a 1-day range (e.g., 2024-01-01 to 2024-01-02)
+
+**Problem**: Memory issues with large datasets  
+**Solution**: 
+- Use shorter date ranges
+- Process symbols in smaller batches
+- Monitor system resources
+
+#### 🔧 Database Connection Issues
+
+**Problem**: "Database connection error"  
+**Solution**: 
+1. Check TimescaleDB is running: `docker-compose ps`
+2. Verify environment variables are set
+3. Check database credentials in `.env`
+4. Restart services: `docker-compose restart`
+
+**Problem**: Schema/table not found  
+**Solution**: 
+- Run `python main.py status` to check database
+- Create tables: `docker-compose up --build`
+
+#### 🔧 Performance Optimization
+
+**Best Practices**:
+- Use appropriate date ranges for each schema type
+- Monitor processing speed (aim for 1000+ records/second)
+- Use batch processing for large symbol lists
+- Enable database compression for historical data
+
+**Monitoring Commands**:
+```bash
+# Check system status
+python main.py status
+
+# View recent ingestion jobs
+python main.py query --symbols ES.c.0 --start-date 2024-01-01 --end-date 2024-01-31 --limit 10
+
+# Monitor database size
+docker-compose exec timescaledb psql -U postgres -d hist_data -c "SELECT pg_size_pretty(pg_database_size('hist_data'));"
+```
+
 ## Recent Changes & Updates
 
 ### 🎉 Definitions Schema Production Success (2025-06-19)
@@ -152,9 +244,9 @@ CLI → PipelineOrchestrator → APIAdapter → RuleEngine → Validator → Sto
 **Production Status**: The definitions schema is now **production-ready** and can be used for live data ingestion with excellent performance.
 
 **Remaining Polish Items**: 
-- NUL character cleaning in storage layer (medium priority)
-- CLI validation for ALL_SYMBOLS (low priority)
-- Date range optimization documentation (low priority)
+- Advanced validation for complex symbol patterns (low priority)
+- Additional monitoring and alerting integrations (enhancement)
+- Extended historical data coverage (expansion)
 
 ### CLI Refactoring Success (2025-06-18)
 Successfully refactored the monolithic main.py file using a simple, pragmatic approach:
