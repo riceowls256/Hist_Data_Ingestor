@@ -30,7 +30,7 @@ except ImportError:
     console.print("⚠️  [yellow]pandas_market_calendars not available - some features may be limited[/yellow]")
 
 try:
-    from utils.custom_logger import setup_logging, get_logger, log_status, log_progress, log_user_message
+    from utils.custom_logger import get_logger
     from core.pipeline_orchestrator import PipelineOrchestrator, PipelineError
     from cli.help_utils import (
         CLIExamples, CLITroubleshooter, CLITips,
@@ -54,13 +54,11 @@ except ImportError as e:
     # Create mock implementations for essential classes
     class MockLogger:
         def exception(self, msg): pass
-        def info(self, msg): pass
-        def warning(self, msg): pass
+        def info(self, msg, **kwargs): pass
+        def warning(self, msg, **kwargs): pass
+        def error(self, msg, **kwargs): pass
     
     def get_logger(name): return MockLogger()
-    def log_user_message(msg): pass
-    def log_status(msg): pass
-    def log_progress(msg): pass
     
     class MockSmartValidator:
         def validate_symbol(self, symbol): 
@@ -254,7 +252,8 @@ def validate(
         python main.py validate 2024-01-01 --type date             # Validate date format
         python main.py validate "" --type date_range --start-date 2024-01-01 --end-date 2024-12-31
     """
-    log_user_message(f"Validating {input_type}: {input_value}")
+    logger.info("command_started", command="validate", input_value=input_value, input_type=input_type, 
+                interactive=interactive, start_date=start_date, end_date=end_date, user="cli")
     console.print(f"\n🔍 [bold cyan]Validating {input_type}: {input_value}[/bold cyan]\n")
     
     try:
@@ -264,8 +263,10 @@ def validate(
         suggestions = []
         
         if input_type == "date_range":
+            logger.info("validation_type_date_range", start_date=start_date, end_date=end_date)
             if not start_date or not end_date:
                 console.print("❌ [red]Date range validation requires --start-date and --end-date[/red]")
+                logger.error("validation_failed", input_type=input_type, reason="missing_date_parameters")
                 raise typer.Exit(code=1)
             
             # Validate date formats
@@ -279,74 +280,96 @@ def validate(
             
             if validation_passed:
                 # Use smart validator for date range analysis
+                logger.info("smart_validation_date_range_started", start_date=start_date, end_date=end_date)
                 try:
                     validator = create_smart_validator()
                     result = validator.validate_date_range(start_date, end_date, interactive=interactive)
                     
                     if result.is_valid:
                         console.print("✅ [green]Date range is valid[/green]")
+                        logger.info("smart_validation_date_range_success")
                         if hasattr(result, 'warnings') and result.warnings:
                             warnings.extend(result.warnings)
+                            logger.info("validation_warnings_found", warning_count=len(result.warnings))
                     else:
                         console.print("❌ [red]Date range validation failed[/red]")
+                        logger.warning("smart_validation_date_range_failed")
                         validation_passed = False
                         
                 except Exception as e:
                     console.print(f"⚠️  [yellow]Smart validation unavailable: {e}[/yellow]")
                     console.print("✅ [green]Basic date format validation passed[/green]")
+                    logger.warning("smart_validation_unavailable", error=str(e))
         
         elif input_type == "date":
+            logger.info("validation_type_date", date_value=input_value)
             if validate_date_format(input_value):
                 console.print("✅ [green]Date format is valid[/green]")
+                logger.info("date_format_validation_success", date_value=input_value)
             else:
                 console.print(f"❌ [red]Invalid date format: {input_value}[/red]")
                 console.print("💡 [blue]Expected format: YYYY-MM-DD (e.g., 2024-01-01)[/blue]")
+                logger.error("date_format_validation_failed", date_value=input_value)
                 validation_passed = False
         
         elif input_type == "schema":
+            logger.info("validation_type_schema", schema_value=input_value)
             if input_value in SUPPORTED_SCHEMAS:
                 console.print(f"✅ [green]Schema '{input_value}' is valid[/green]")
+                logger.info("schema_validation_success", schema_value=input_value)
             else:
                 console.print(f"❌ [red]Invalid schema: {input_value}[/red]")
                 console.print(f"💡 [blue]Valid schemas: {', '.join(SUPPORTED_SCHEMAS)}[/blue]")
+                logger.error("schema_validation_failed", schema_value=input_value, supported_schemas=SUPPORTED_SCHEMAS)
                 validation_passed = False
         
         elif input_type == "symbol":
+            logger.info("validation_type_symbol", symbol_value=input_value)
             try:
                 validator = create_smart_validator()
                 result = validator.validate_symbol(input_value)
                 
                 if result.is_valid:
                     console.print(f"✅ [green]Symbol '{input_value}' is valid[/green]")
+                    logger.info("symbol_validation_success", symbol_value=input_value)
                 else:
                     console.print(f"❌ [red]Symbol '{input_value}' validation failed[/red]")
+                    logger.error("symbol_validation_failed", symbol_value=input_value)
                     validation_passed = False
                 
                 if hasattr(result, 'suggestions') and result.suggestions:
                     suggestions.extend(result.suggestions)
+                    logger.info("validation_suggestions_found", suggestion_count=len(result.suggestions))
                     
             except Exception as e:
                 console.print(f"⚠️  [yellow]Smart symbol validation unavailable: {e}[/yellow]")
+                logger.warning("smart_symbol_validation_unavailable", error=str(e))
                 # Basic symbol format validation
                 if input_value and len(input_value) > 0:
                     console.print(f"✅ [green]Symbol '{input_value}' has valid format[/green]")
+                    logger.info("basic_symbol_validation_success", symbol_value=input_value)
                 else:
                     console.print("❌ [red]Empty symbol provided[/red]")
+                    logger.error("basic_symbol_validation_failed", reason="empty_symbol")
                     validation_passed = False
         
         elif input_type == "symbol_list":
+            logger.info("validation_type_symbol_list", symbol_list_input=input_value)
             symbols = [s.strip() for s in input_value.split(",") if s.strip()]
             if not symbols:
                 console.print("❌ [red]No valid symbols found in list[/red]")
+                logger.error("symbol_list_validation_failed", reason="no_valid_symbols")
                 validation_passed = False
             else:
                 console.print(f"✅ [green]Found {len(symbols)} symbols in list[/green]")
+                logger.info("symbol_list_validation_success", symbol_count=len(symbols), symbols=symbols)
                 for symbol in symbols:
                     console.print(f"  • {symbol}")
         
         else:
             console.print(f"❌ [red]Unknown validation type: {input_type}[/red]")
             console.print("💡 [blue]Valid types: symbol, symbol_list, schema, date, date_range[/blue]")
+            logger.error("validation_failed", input_type=input_type, reason="unknown_validation_type")
             validation_passed = False
         
         # Display warnings if any
@@ -364,8 +387,13 @@ def validate(
         # Final result
         if validation_passed:
             console.print(f"\n✅ [bold green]Validation passed for {input_type}[/bold green]")
+            logger.info("command_completed", command="validate", input_type=input_type, 
+                       input_value=input_value, status="success", warning_count=len(warnings), 
+                       suggestion_count=len(suggestions))
         else:
             console.print(f"\n❌ [bold red]Validation failed for {input_type}[/bold red]")
+            logger.error("command_failed", command="validate", input_type=input_type, 
+                        input_value=input_value, status="validation_failed")
             raise typer.Exit(code=1)
     
     except typer.Exit:
@@ -373,7 +401,8 @@ def validate(
     except Exception as e:
         console.print(f"❌ [red]Validation error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot validate' for help[/blue]")
-        logger.exception("Validation command failed")
+        logger.error("command_failed", command="validate", input_type=input_type, 
+                    input_value=input_value, error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 
@@ -409,11 +438,14 @@ def market_calendar(
         # List all available exchanges
         python main.py market-calendar 2024-01-01 2024-01-02 --list-exchanges
     """
-    log_user_message(f"Market calendar analysis: {start_date} to {end_date}, exchange: {exchange}")
+    logger.info("command_started", command="market_calendar", start_date=start_date, end_date=end_date, 
+                exchange=exchange, show_holidays=show_holidays, show_schedule=show_schedule, 
+                coverage_only=coverage_only, list_exchanges=list_exchanges, user="cli")
     
     try:
         # Handle list exchanges option
         if list_exchanges:
+            logger.info("list_exchanges_requested")
             console.print("\n📅 [bold cyan]Available Market Calendar Exchanges[/bold cyan]\n")
             exchanges = get_available_exchanges()
             
@@ -440,25 +472,34 @@ def market_calendar(
             
             console.print(table)
             console.print(f"\n💡 [blue]Use --exchange EXCHANGE_NAME to analyze specific exchange[/blue]")
+            logger.info("command_completed", command="market_calendar", mode="list_exchanges", 
+                       exchange_count=len(exchanges), status="success")
             return
         
         # Validate date formats
+        logger.info("date_format_validation_started", start_date=start_date, end_date=end_date)
         if not validate_date_format(start_date):
             console.print(f"❌ [red]Invalid start_date format: {start_date}[/red]")
             console.print("💡 [blue]Expected format: YYYY-MM-DD[/blue]")
+            logger.error("date_format_validation_failed", date_field="start_date", value=start_date)
             raise typer.Exit(code=1)
         
         if not validate_date_format(end_date):
             console.print(f"❌ [red]Invalid end_date format: {end_date}[/red]")
             console.print("💡 [blue]Expected format: YYYY-MM-DD[/blue]")
+            logger.error("date_format_validation_failed", date_field="end_date", value=end_date)
             raise typer.Exit(code=1)
         
         # Validate date order
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        date_range_days = (end_dt - start_dt).days
         if start_dt >= end_dt:
             console.print("❌ [red]Start date must be before end date[/red]")
+            logger.error("date_range_validation_failed", start_date=start_date, end_date=end_date, reason="invalid_order")
             raise typer.Exit(code=1)
+        
+        logger.info("date_validation_success", start_date=start_date, end_date=end_date, date_range_days=date_range_days)
         
         console.print(f"\n📅 [bold cyan]Market Calendar Analysis[/bold cyan]\n")
         console.print(f"📊 Date Range: {start_date} to {end_date}")
@@ -466,7 +507,10 @@ def market_calendar(
         
         # Perform calendar analysis
         console.print("🔄 [cyan]Analyzing market calendar...[/cyan]")
+        logger.info("market_calendar_analysis_started", exchange=exchange, date_range_days=date_range_days)
         analysis = analyze_market_calendar(start_date, end_date, exchange)
+        logger.info("market_calendar_analysis_completed", analysis_success=analysis.get("analysis_success", False),
+                   trading_days=analysis.get("trading_days", 0), total_days=analysis.get("total_days", 0))
         
         if not analysis.get("analysis_success", False):
             console.print(f"⚠️  [yellow]Calendar analysis completed with limitations[/yellow]")
@@ -537,13 +581,21 @@ def market_calendar(
             console.print(f"💡 [blue]High-frequency data over {trading_days} trading days may be substantial[/blue]")
         
         console.print(f"\n✅ [bold green]Market calendar analysis completed successfully![/bold green]")
+        
+        # Log successful completion with analysis metrics
+        logger.info("command_completed", command="market_calendar", exchange=exchange, 
+                   start_date=start_date, end_date=end_date, status="success",
+                   trading_days=analysis.get("trading_days", 0), total_days=analysis.get("total_days", 0),
+                   coverage_percentage=analysis.get("coverage_percentage", 0), 
+                   analysis_success=analysis.get("analysis_success", False))
     
     except typer.Exit:
         raise
     except Exception as e:
         console.print(f"❌ [red]Market calendar analysis failed: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot market-calendar' for help[/blue]")
-        logger.exception("Market calendar command failed")
+        logger.error("command_failed", command="market_calendar", exchange=exchange,
+                    start_date=start_date, end_date=end_date, error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 

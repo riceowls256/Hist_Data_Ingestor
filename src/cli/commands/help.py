@@ -46,7 +46,15 @@ def examples(
         python main.py examples query        # Show query examples only
         python main.py examples ingest       # Show ingestion examples
     """
-    show_examples(command)
+    logger.info("command_started", command="examples", requested_command=command, user="cli")
+    
+    try:
+        show_examples(command)
+        logger.info("command_completed", command="examples", requested_command=command, status="success")
+    except Exception as e:
+        logger.error("command_failed", command="examples", requested_command=command, 
+                    error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command()
@@ -64,16 +72,32 @@ def troubleshoot(
         python main.py troubleshoot "database error"   # Get database help
         python main.py troubleshoot "symbol not found" # Symbol resolution help
     """
-    if error:
-        console.print(f"\n🔍 [bold cyan]Troubleshooting: {error}[/bold cyan]\n")
-        CLITroubleshooter.show_help(error)
-    else:
-        console.print("\n🔧 [bold cyan]Common Issues and Solutions:[/bold cyan]\n")
-        for _, issue_data in CLITroubleshooter.COMMON_ISSUES.items():
-            console.print(f"[bold yellow]{issue_data['title']}:[/bold yellow]")
-            console.print(f"  Error patterns: {', '.join(issue_data['error_patterns'][:2])}...")
-            console.print(f"  Solution: {issue_data['solutions'][0]}")
-            console.print()
+    logger.info("command_started", command="troubleshoot", error_query=error, user="cli")
+    
+    try:
+        if error:
+            logger.info("troubleshoot_specific_error", error_query=error)
+            console.print(f"\n🔍 [bold cyan]Troubleshooting: {error}[/bold cyan]\n")
+            CLITroubleshooter.show_help(error)
+        else:
+            logger.info("troubleshoot_general_help")
+            console.print("\n🔧 [bold cyan]Common Issues and Solutions:[/bold cyan]\n")
+            issue_count = 0
+            for _, issue_data in CLITroubleshooter.COMMON_ISSUES.items():
+                console.print(f"[bold yellow]{issue_data['title']}:[/bold yellow]")
+                console.print(f"  Error patterns: {', '.join(issue_data['error_patterns'][:2])}...")
+                console.print(f"  Solution: {issue_data['solutions'][0]}")
+                console.print()
+                issue_count += 1
+            
+            logger.info("troubleshoot_general_completed", issues_displayed=issue_count)
+        
+        logger.info("command_completed", command="troubleshoot", error_query=error, status="success")
+        
+    except Exception as e:
+        logger.error("command_failed", command="troubleshoot", error_query=error,
+                    error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command()
@@ -91,7 +115,15 @@ def tips(
         python main.py tips performance      # Performance optimization tips
         python main.py tips troubleshooting  # Troubleshooting tips
     """
-    show_tips(category)
+    logger.info("command_started", command="tips", category=category, user="cli")
+    
+    try:
+        show_tips(category)
+        logger.info("command_completed", command="tips", category=category, status="success")
+    except Exception as e:
+        logger.error("command_failed", command="tips", category=category,
+                    error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command()
@@ -104,11 +136,21 @@ def schemas():
     - Key fields and their meanings
     - Common use cases
     """
-    console.print("\n📊 [bold cyan]Available Data Schemas[/bold cyan]\n")
-    table = format_schema_help()
-    console.print(table)
-    console.print("\n💡 [yellow]Use --schema parameter with query or ingest commands[/yellow]")
-    console.print("Example: python main.py query -s ES.c.0 --schema trades")
+    logger.info("command_started", command="schemas", user="cli")
+    
+    try:
+        logger.info("schemas_display_started")
+        console.print("\n📊 [bold cyan]Available Data Schemas[/bold cyan]\n")
+        table = format_schema_help()
+        console.print(table)
+        console.print("\n💡 [yellow]Use --schema parameter with query or ingest commands[/yellow]")
+        console.print("Example: python main.py query -s ES.c.0 --schema trades")
+        
+        logger.info("command_completed", command="schemas", status="success")
+        
+    except Exception as e:
+        logger.error("command_failed", command="schemas", error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command("help-menu")
@@ -124,7 +166,15 @@ def help_menu():
     - Troubleshooting
     - Reference
     """
-    InteractiveHelpMenu.show_menu()
+    logger.info("command_started", command="help_menu", user="cli")
+    
+    try:
+        logger.info("interactive_help_menu_started")
+        InteractiveHelpMenu.show_menu()
+        logger.info("command_completed", command="help_menu", status="success")
+    except Exception as e:
+        logger.error("command_failed", command="help_menu", error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command()
@@ -139,7 +189,15 @@ def quickstart():
     - Setting date ranges
     - Generating ready-to-use commands
     """
-    QuickstartWizard.run()
+    logger.info("command_started", command="quickstart", user="cli")
+    
+    try:
+        logger.info("quickstart_wizard_started")
+        QuickstartWizard.run()
+        logger.info("command_completed", command="quickstart", status="success")
+    except Exception as e:
+        logger.error("command_failed", command="quickstart", error=str(e), error_type=type(e).__name__)
+        raise
 
 
 @app.command()
@@ -154,4 +212,12 @@ def cheatsheet():
     - Symbol format reference
     - Pro tips for efficient usage
     """
-    CheatSheet.display()
+    logger.info("command_started", command="cheatsheet", user="cli")
+    
+    try:
+        logger.info("cheatsheet_display_started")
+        CheatSheet.display()
+        logger.info("command_completed", command="cheatsheet", status="success")
+    except Exception as e:
+        logger.error("command_failed", command="cheatsheet", error=str(e), error_type=type(e).__name__)
+        raise

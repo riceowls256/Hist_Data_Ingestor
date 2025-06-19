@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 console = Console()
 
 try:
-    from utils.custom_logger import setup_logging, get_logger, log_status, log_progress, log_user_message
+    from utils.custom_logger import get_logger
     from core.pipeline_orchestrator import PipelineOrchestrator, PipelineError
     from cli.help_utils import (
         CLIExamples, CLITroubleshooter, CLITips,
@@ -46,13 +46,11 @@ except ImportError as e:
     # Create mock implementations for essential classes
     class MockLogger:
         def exception(self, msg): pass
-        def info(self, msg): pass
-        def warning(self, msg): pass
+        def info(self, msg, **kwargs): pass
+        def warning(self, msg, **kwargs): pass
+        def error(self, msg, **kwargs): pass
     
     def get_logger(name): return MockLogger()
-    def log_user_message(msg): pass
-    def log_status(msg): pass
-    def log_progress(msg): pass
     
     class MockWorkflowExamples:
         @staticmethod
@@ -107,15 +105,17 @@ def workflows(
         python main.py workflows                    # List all workflows
         python main.py workflows daily_analysis     # Show specific workflow
     """
-    log_user_message("Displaying workflow examples")
+    logger.info("command_started", command="workflows", workflow_name=workflow_name, user="cli")
     
     try:
         WorkflowExamples.show_workflow(workflow_name)
+        logger.info("command_completed", command="workflows", workflow_name=workflow_name, status="success")
         
     except Exception as e:
         console.print(f"❌ [red]Error displaying workflows: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot workflows' for help[/blue]")
-        logger.exception("Workflows command failed")
+        logger.error("command_failed", command="workflows", workflow_name=workflow_name, 
+                    error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 
@@ -148,10 +148,12 @@ def workflow(
         python main.py workflow list                     # Show saved workflows
         python main.py workflow load --name "My Workflow"  # Load specific workflow
     """
-    log_user_message(f"Executing workflow action: {action}")
+    logger.info("command_started", command="workflow", action=action, name=name, 
+                workflow_type=workflow_type, user="cli")
     
     try:
         if action == "create":
+            logger.info("workflow_create_started", workflow_type=workflow_type)
             console.print("\n🔧 [bold cyan]Creating Interactive Workflow[/bold cyan]\n")
             
             workflow_type_enum = None
@@ -170,46 +172,61 @@ def workflow(
                     console.print(f"📋 Type: {workflow.workflow_type.value}")
                     console.print(f"📝 Steps: {len(workflow.steps)}")
                     console.print(f"💾 ID: {workflow.id}")
+                    logger.info("workflow_create_success", workflow_name=workflow.name, 
+                               workflow_type=workflow.workflow_type.value, step_count=len(workflow.steps))
                 else:
                     console.print("\n⏹️  [yellow]Workflow creation cancelled[/yellow]")
+                    logger.info("workflow_create_cancelled")
             except Exception as e:
                 console.print(f"❌ [red]Failed to create workflow: {e}[/red]")
-                logger.exception("Workflow creation failed")
+                logger.error("workflow_create_failed", error=str(e), error_type=type(e).__name__)
                 raise typer.Exit(1)
         
         elif action == "list":
+            logger.info("workflow_list_started")
             console.print("\n📋 [bold cyan]Saved Workflows[/bold cyan]\n")
             _list_workflows()
+            logger.info("workflow_list_completed")
         
         elif action == "load":
             if not name:
                 console.print("❌ [red]Workflow name is required for load action[/red]")
                 console.print("💡 [blue]Use: python main.py workflow load --name 'My Workflow'[/blue]")
+                logger.error("workflow_load_failed", reason="missing_name")
                 raise typer.Exit(1)
             
+            logger.info("workflow_load_started", workflow_name=name)
             console.print(f"\n📂 [bold cyan]Loading Workflow: {name}[/bold cyan]\n")
             _load_workflow(name)
+            logger.info("workflow_load_completed", workflow_name=name)
         
         elif action == "run":
             if not name:
                 console.print("❌ [red]Workflow name is required for run action[/red]")
                 console.print("💡 [blue]Use: python main.py workflow run --name 'My Workflow'[/blue]")
+                logger.error("workflow_run_failed", reason="missing_name")
                 raise typer.Exit(1)
             
+            logger.info("workflow_run_started", workflow_name=name)
             console.print(f"\n🚀 [bold cyan]Running Workflow: {name}[/bold cyan]\n")
             _run_workflow(name)
+            logger.info("workflow_run_completed", workflow_name=name)
         
         else:
             console.print(f"❌ [red]Invalid action: {action}[/red]")
             console.print("Valid actions: create, list, load, run")
+            logger.error("workflow_action_failed", action=action, reason="invalid_action")
             raise typer.Exit(1)
     
+        logger.info("command_completed", command="workflow", action=action, status="success")
+        
     except typer.Exit:
         raise
     except Exception as e:
         console.print(f"❌ [red]Workflow command failed: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot workflow' for help[/blue]")
-        logger.exception("Workflow command failed")
+        logger.error("command_failed", command="workflow", action=action, 
+                    error=str(e), error_type=type(e).__name__)
         raise typer.Exit(code=1)
 
 
