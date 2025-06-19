@@ -88,6 +88,22 @@ except ImportError as e:
     console.print(f"⚠️  [yellow]Could not load querying commands: {e}[/yellow]")
 total_modules += 1
 
+# Workflow commands
+try:
+    from cli.commands.workflow import app as workflow_app
+    success_count += 1
+except ImportError as e:
+    console.print(f"⚠️  [yellow]Could not load workflow commands: {e}[/yellow]")
+total_modules += 1
+
+# Validation commands
+try:
+    from cli.commands.validation import app as validation_app
+    success_count += 1
+except ImportError as e:
+    console.print(f"⚠️  [yellow]Could not load validation commands: {e}[/yellow]")
+total_modules += 1
+
 # Add system commands directly to main app for now
 if 'system_app' in locals():
     @app.command()
@@ -340,6 +356,84 @@ if 'system_app' in locals():
             from cli.commands.querying import query as querying_query
             return querying_query(symbols, start_date, end_date, schema, output_format, output_file, limit, dry_run, validate_only, guided)
 
+    # Add workflow commands to main app if available
+    if 'workflow_app' in locals():
+        @app.command()
+        def workflows(
+            workflow_name: Optional[str] = typer.Argument(
+                None,
+                help="Specific workflow to display (daily_analysis, historical_research, intraday_analysis)"
+            )
+        ):
+            """Show complete workflow examples for common use cases."""
+            from cli.commands.workflow import workflows as workflow_workflows
+            return workflow_workflows(workflow_name)
+        
+        @app.command()
+        def workflow(
+            action: str = typer.Argument(
+                ...,
+                help="Action: create, list, load, run"
+            ),
+            name: Optional[str] = typer.Option(
+                None,
+                "--name", "-n",
+                help="Workflow name for load/run actions"
+            ),
+            workflow_type: Optional[str] = typer.Option(
+                None,
+                "--type", "-t",
+                help="Workflow type: backfill, daily_update, multi_symbol, data_quality, custom"
+            )
+        ):
+            """🔧 Interactive workflow builder for complex operations."""
+            from cli.commands.workflow import workflow as workflow_workflow
+            return workflow_workflow(action, name, workflow_type)
+
+    # Add validation commands to main app if available
+    if 'validation_app' in locals():
+        @app.command()
+        def validate(
+            input_value: str = typer.Argument(..., help="Value to validate"),
+            input_type: str = typer.Option(
+                "symbol",
+                "--type", "-t",
+                help="Type of validation: symbol, symbol_list, schema, date, date_range"
+            ),
+            interactive: bool = typer.Option(
+                True,
+                "--interactive/--no-interactive",
+                help="Enable interactive suggestions"
+            ),
+            start_date: Optional[str] = typer.Option(
+                None,
+                "--start-date",
+                help="Start date for date range validation (YYYY-MM-DD)"
+            ),
+            end_date: Optional[str] = typer.Option(
+                None,
+                "--end-date", 
+                help="End date for date range validation (YYYY-MM-DD)"
+            )
+        ):
+            """🔍 Smart validation for CLI inputs with suggestions and autocomplete."""
+            from cli.commands.validation import validate as validation_validate
+            return validation_validate(input_value, input_type, interactive, start_date, end_date)
+        
+        @app.command("market-calendar")
+        def market_calendar(
+            start_date: str = typer.Argument(..., help="Start date (YYYY-MM-DD)"),
+            end_date: str = typer.Argument(..., help="End date (YYYY-MM-DD)"),
+            exchange: str = typer.Option("NYSE", help="Exchange name (NYSE, NASDAQ, CME_Equity, CME_Energy, LSE, etc.)"),
+            show_holidays: bool = typer.Option(False, "--holidays", help="Show individual holidays in the date range"),
+            show_schedule: bool = typer.Option(False, "--schedule", help="Show market open/close schedule"),
+            coverage_only: bool = typer.Option(False, "--coverage", help="Show only coverage summary"),
+            list_exchanges: bool = typer.Option(False, "--list-exchanges", help="List all available exchanges")
+        ):
+            """📅 Market calendar analysis and trading day validation."""
+            from cli.commands.validation import market_calendar as validation_market_calendar
+            return validation_market_calendar(start_date, end_date, exchange, show_holidays, show_schedule, coverage_only, list_exchanges)
+
 # Report loading status
 if success_count == total_modules:
     console.print(f"✅ [green]All {success_count}/{total_modules} command modules loaded successfully[/green]")
@@ -367,17 +461,18 @@ def info():
     console.print("  • Help commands (examples, troubleshoot, tips, schemas, quickstart, help-menu, cheatsheet)")
     console.print("  • Ingestion commands (ingest, backfill)")
     console.print("  • Query commands (query)")
+    console.print("  • Workflow commands (workflows, workflow)")
+    console.print("  • Validation commands (validate, market-calendar)")
     console.print("  • CLI infrastructure and base classes")
     console.print("  • Shared utilities and constants")
     console.print("  • Comprehensive testing framework")
+    console.print("  • Pandas market calendar integration")
     
     console.print("\n🚧 [yellow]In Progress:[/yellow]")
     console.print("  • Integration testing")
     console.print("  • Performance optimization")
     
     console.print("\n⏳ [blue]Pending:[/blue]")
-    console.print("  • Workflow commands (quickstart, workflows)")
-    console.print("  • Validation commands (validate, market-calendar)")
     console.print("  • Symbol commands (groups, symbols, symbol-lookup)")
     
     console.print("\n📖 [dim]For complete functionality, use: python main.py (original CLI)[/dim]")
