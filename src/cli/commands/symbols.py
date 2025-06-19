@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 console = Console()
 
 try:
-    from utils.custom_logger import setup_logging, get_logger, log_status, log_progress, log_user_message
+    from src.utils.custom_logger import get_logger
     from cli.symbol_groups import SymbolGroupManager
     from cli.enhanced_help_utils import SymbolHelper
     from cli.smart_validation import create_smart_validator
@@ -38,9 +38,6 @@ except ImportError as e:
         def warning(self, msg): pass
     
     def get_logger(name): return MockLogger()
-    def log_user_message(msg): pass
-    def log_status(msg): pass
-    def log_progress(msg): pass
     
     class MockSymbolGroupManager:
         def list_groups(self, category=None):
@@ -147,18 +144,28 @@ def groups(
         python main.py groups --create MY_GROUP --symbols "ES.c.0,NQ.c.0" --description "My futures"
         python main.py groups --delete MY_GROUP                # Delete custom group
     """
-    log_user_message(f"Symbol groups command: list={list_all}, category={category}, info={info}, create={create}")
+    logger.info("command_started", 
+                command="groups", 
+                list_all=list_all, 
+                category=category, 
+                info=info, 
+                create=create, 
+                delete=delete,
+                user="cli")
     
     try:
         manager = SymbolGroupManager()
         
         if delete:
+            logger.info("group_deletion_started", group_name=delete)
             console.print(f"🗑️  [yellow]Deleting group: {delete}[/yellow]")
             if manager.delete_group(delete):
                 console.print(f"✅ [green]Group '{delete}' deleted successfully[/green]")
+                logger.info("group_deletion_completed", group_name=delete, status="success")
             else:
                 console.print(f"❌ [red]Failed to delete group '{delete}'[/red]")
                 console.print("💡 [blue]Only custom groups can be deleted[/blue]")
+                logger.error("group_deletion_failed", group_name=delete, reason="delete_failed")
                 raise typer.Exit(1)
         
         elif create:
@@ -171,23 +178,31 @@ def groups(
                 console.print("❌ [red]No valid symbols provided[/red]")
                 raise typer.Exit(1)
             
+            logger.info("group_creation_started", group_name=create, symbol_count=len(symbol_list))
             console.print(f"🔨 [cyan]Creating group: {create}[/cyan]")
             console.print(f"📊 Symbols: {', '.join(symbol_list)}")
             
             if manager.create_group(create, symbol_list, description or ""):
                 console.print(f"✅ [green]Group '{create}' created successfully[/green]")
                 console.print(f"📝 Contains {len(symbol_list)} symbols")
+                logger.info("group_creation_completed", 
+                            group_name=create, 
+                            symbol_count=len(symbol_list), 
+                            status="success")
             else:
                 console.print(f"❌ [red]Failed to create group '{create}'[/red]")
+                logger.error("group_creation_failed", group_name=create, symbol_count=len(symbol_list))
                 raise typer.Exit(1)
         
         elif info:
+            logger.info("group_info_requested", group_name=info)
             console.print(f"ℹ️  [bold cyan]Group Information: {info}[/bold cyan]")
             group_info = manager.get_group_info(info)
             
             if not group_info:
                 console.print(f"❌ [red]Group '{info}' not found[/red]")
                 console.print("💡 [blue]Use --list to see available groups[/blue]")
+                logger.error("group_info_failed", group_name=info, reason="not_found")
                 raise typer.Exit(1)
             
             # Display group details
@@ -208,9 +223,14 @@ def groups(
                 console.print(f"\n📊 [bold cyan]Symbols ({len(symbols_list)})[/bold cyan]")
                 for i, symbol in enumerate(symbols_list, 1):
                     console.print(f"  {i:2d}. {symbol}")
+                logger.info("group_info_completed", 
+                            group_name=info, 
+                            symbol_count=len(symbols_list), 
+                            status="success")
         
         else:
             # List groups (default behavior)
+            logger.info("groups_list_requested", category=category)
             console.print("🔗 [bold cyan]Available Symbol Groups[/bold cyan]\n")
             
             groups_dict = manager.list_groups(category=category)
@@ -248,15 +268,25 @@ def groups(
             
             console.print(table)
             console.print(f"\n💡 [blue]Use --info GROUP_NAME for detailed information[/blue]")
+            logger.info("groups_list_completed", 
+                        category=category, 
+                        group_count=len(groups_dict), 
+                        status="success")
             
-        log_status("Symbol groups command completed successfully")
+        logger.info("command_completed", 
+                    command="groups", 
+                    operation_type="list" if not (create or delete or info) else ("create" if create else "delete" if delete else "info"),
+                    status="success")
     
     except typer.Exit:
         raise
     except Exception as e:
         console.print(f"❌ [red]Groups command error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot groups' for help[/blue]")
-        logger.exception("Groups command failed")
+        logger.error("command_failed", 
+                     command="groups", 
+                     error=str(e), 
+                     error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
@@ -285,7 +315,11 @@ def symbols(
         python main.py symbols --search "crude oil"        # Search by name
         python main.py symbols --search "CL"               # Search by symbol pattern
     """
-    log_user_message(f"Symbols discovery: category={category}, search={search}")
+    logger.info("command_started", 
+                command="symbols", 
+                category=category, 
+                search=search,
+                user="cli")
     console.print("📈 [bold cyan]Symbol Discovery[/bold cyan]\n")
     
     try:
@@ -299,15 +333,23 @@ def symbols(
             console.print("📊 [cyan]Showing all available symbols[/cyan]")
         
         # Delegate to SymbolHelper for the actual display
+        logger.info("symbol_discovery_started", category=category, search=search)
         helper.show_symbols(category=category, search=search)
         
         console.print(f"\n💡 [blue]Use 'python main.py symbol-lookup SYMBOL' for detailed symbol information[/blue]")
-        log_status("Symbol discovery completed successfully")
+        logger.info("command_completed", 
+                    command="symbols", 
+                    category=category, 
+                    search=search, 
+                    status="success")
     
     except Exception as e:
         console.print(f"❌ [red]Symbols discovery error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot symbols' for help[/blue]")
-        logger.exception("Symbols discovery command failed")
+        logger.error("command_failed", 
+                     command="symbols", 
+                     error=str(e), 
+                     error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
@@ -336,15 +378,22 @@ def symbol_lookup(
         python main.py symbol-lookup "ES" --fuzzy           # Fuzzy search
         python main.py symbol-lookup "crude" --fuzzy --suggestions 10  # More suggestions
     """
-    log_user_message(f"Symbol lookup: {symbol}, fuzzy={fuzzy}, suggestions={suggestions}")
+    logger.info("command_started", 
+                command="symbol_lookup", 
+                symbol=symbol, 
+                fuzzy=fuzzy, 
+                suggestions=suggestions,
+                user="cli")
     console.print(f"🔍 [bold cyan]Symbol Lookup: {symbol}[/bold cyan]\n")
     
     try:
+        logger.info("symbol_validation_started", symbol=symbol, fuzzy=fuzzy)
         validator = create_smart_validator()
         result = validator.validate_symbol(symbol)
         
         if result.is_valid:
             console.print(f"✅ [green]Symbol '{symbol}' is valid[/green]")
+            logger.info("symbol_validation_completed", symbol=symbol, is_valid=True, status="success")
             
             # If we have metadata, show detailed information
             if hasattr(result, 'metadata') and result.metadata:
@@ -362,9 +411,11 @@ def symbol_lookup(
                 table.add_row("Exchange", metadata.get("exchange", "N/A"))
                 
                 console.print(table)
+                logger.info("symbol_metadata_displayed", symbol=symbol, has_metadata=True)
         
         else:
             console.print(f"❌ [red]Symbol '{symbol}' not found[/red]")
+            logger.info("symbol_validation_completed", symbol=symbol, is_valid=False)
             
             if fuzzy and hasattr(result, 'suggestions') and result.suggestions:
                 console.print(f"\n💡 [yellow]Similar symbols found:[/yellow]")
@@ -384,18 +435,30 @@ def symbol_lookup(
                 
                 console.print(suggestions_table)
                 console.print(f"\n💡 [blue]Use exact symbol for detailed lookup[/blue]")
+                logger.info("symbol_suggestions_provided", 
+                            symbol=symbol, 
+                            suggestion_count=len(result.suggestions[:suggestions]))
             
             elif fuzzy:
                 console.print(f"💡 [blue]No similar symbols found. Try a different search pattern.[/blue]")
             else:
                 console.print(f"💡 [blue]Use --fuzzy for similar symbol suggestions[/blue]")
         
-        log_status("Symbol lookup completed successfully")
+        logger.info("command_completed", 
+                    command="symbol_lookup", 
+                    symbol=symbol, 
+                    is_valid=result.is_valid, 
+                    fuzzy=fuzzy, 
+                    status="success")
     
     except Exception as e:
         console.print(f"❌ [red]Symbol lookup error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot symbol-lookup' for help[/blue]")
-        logger.exception("Symbol lookup command failed")
+        logger.error("command_failed", 
+                     command="symbol_lookup", 
+                     symbol=symbol, 
+                     error=str(e), 
+                     error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
@@ -444,12 +507,19 @@ def exchange_mapping(
         python main.py exchange-mapping --test ES.c.0       # Test single symbol
         python main.py exchange-mapping "ES.c.0,NQ.c.0" --min-confidence 0.8  # Batch analysis
     """
-    log_user_message(f"Exchange mapping: symbols={symbols}, list={list_exchanges}, test={test}")
+    logger.info("command_started", 
+                command="exchange_mapping", 
+                symbols=symbols, 
+                list_exchanges=list_exchanges, 
+                test=test, 
+                info=info,
+                user="cli")
     
     try:
         mapper = get_exchange_mapper()
         
         if list_exchanges:
+            logger.info("exchange_list_requested")
             console.print("🏢 [bold cyan]Supported Exchange Calendars[/bold cyan]\n")
             
             # Get exchanges from the predefined exchange info in mapper
@@ -467,8 +537,10 @@ def exchange_mapping(
             
             console.print(table)
             console.print(f"\n💡 [blue]Use --info EXCHANGE for detailed information[/blue]")
+            logger.info("exchange_list_completed", exchange_count=len(exchanges), status="success")
         
         elif mappings:
+            logger.info("mapping_rules_requested")
             console.print("🗺️  [bold cyan]Exchange Mapping Rules[/bold cyan]\n")
             
             # Show the mapping patterns by examining the ExchangeMapper mappings
@@ -491,14 +563,17 @@ def exchange_mapping(
             
             console.print(f"\n💡 [blue]Rules are applied with confidence scoring based on regex patterns[/blue]")
             console.print(f"💡 [blue]Use --test SYMBOL to see how a specific symbol maps[/blue]")
+            logger.info("mapping_rules_completed", pattern_count=len(example_patterns), status="success")
         
         elif info:
+            logger.info("exchange_info_requested", exchange=info)
             console.print(f"ℹ️  [bold cyan]Exchange Information: {info}[/bold cyan]\n")
             
             exchange_data = mapper.get_exchange_info(info)
             if not exchange_data:
                 console.print(f"❌ [red]Exchange '{info}' not found[/red]")
                 console.print("💡 [blue]Use --list to see available exchanges[/blue]")
+                logger.error("exchange_info_failed", exchange=info, reason="not_found")
                 raise typer.Exit(1)
             
             table = Table(title=f"Exchange: {info}")
@@ -511,8 +586,10 @@ def exchange_mapping(
             table.add_row("Calendar Type", exchange_data.get("calendar", "N/A"))
             
             console.print(table)
+            logger.info("exchange_info_completed", exchange=info, status="success")
         
         elif test:
+            logger.info("symbol_mapping_test_started", symbol=test)
             console.print(f"🧪 [cyan]Testing symbol mapping: {test}[/cyan]")
             
             exchange, confidence, mapping_info = mapper.map_symbol_to_exchange(test)
@@ -531,6 +608,12 @@ def exchange_mapping(
                 console.print(f"⚠️  [yellow]Low confidence mapping[/yellow]")
             elif confidence >= 0.9:
                 console.print(f"✅ [green]High confidence mapping[/green]")
+            
+            logger.info("symbol_mapping_test_completed", 
+                        symbol=test, 
+                        exchange=exchange, 
+                        confidence=confidence, 
+                        status="success")
         
         elif symbols:
             symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
@@ -542,6 +625,7 @@ def exchange_mapping(
             console.print(f"📊 Analyzing {len(symbol_list)} symbols\n")
             
             # Map each symbol individually to get detailed results
+            logger.info("batch_symbol_mapping_started", symbol_count=len(symbol_list), min_confidence=min_confidence)
             results = []
             for symbol in symbol_list:
                 exchange, confidence, mapping_info = mapper.map_symbol_to_exchange(symbol)
@@ -558,6 +642,10 @@ def exchange_mapping(
             if not filtered_results:
                 console.print(f"❌ [red]No results above confidence threshold {min_confidence:.1%}[/red]")
                 console.print("💡 [blue]Try lowering --min-confidence[/blue]")
+                logger.error("batch_mapping_failed", 
+                             symbol_count=len(symbol_list), 
+                             min_confidence=min_confidence, 
+                             reason="no_results_above_threshold")
                 raise typer.Exit(1)
             
             # Create results table
@@ -587,6 +675,13 @@ def exchange_mapping(
             console.print(f"\n📈 [cyan]Exchange Distribution:[/cyan]")
             for exchange, count in exchange_counts.items():
                 console.print(f"  • {exchange}: {count} symbols")
+            
+            logger.info("batch_symbol_mapping_completed", 
+                        symbol_count=len(symbol_list), 
+                        filtered_count=len(filtered_results), 
+                        min_confidence=min_confidence, 
+                        exchange_distribution=exchange_counts, 
+                        status="success")
         
         else:
             console.print("🏢 [bold cyan]Exchange Mapping Tool[/bold cyan]\n")
@@ -598,14 +693,20 @@ def exchange_mapping(
             console.print("  SYMBOLS             Analyze symbol list")
             console.print("\n💡 [blue]Example: python main.py exchange-mapping 'ES.c.0,NQ.c.0'[/blue]")
         
-        log_status("Exchange mapping completed successfully")
+        logger.info("command_completed", 
+                    command="exchange_mapping", 
+                    operation_type="list" if list_exchanges else ("mappings" if mappings else ("info" if info else ("test" if test else "batch" if symbols else "help"))),
+                    status="success")
     
     except typer.Exit:
         raise
     except Exception as e:
         console.print(f"❌ [red]Exchange mapping error: {e}[/red]")
         console.print(f"💡 [blue]Use 'python main.py troubleshoot exchange-mapping' for help[/blue]")
-        logger.exception("Exchange mapping command failed")
+        logger.error("command_failed", 
+                     command="exchange_mapping", 
+                     error=str(e), 
+                     error_type=type(e).__name__)
         raise typer.Exit(1)
 
 
